@@ -14,7 +14,12 @@ class TechnicalIndicators:
         length: int,
     ) -> pd.Series:
         """Calculate EMA."""
-        ...
+        import pandas_ta_classic as ta
+
+        return ta.ema(
+            dataframe["close"],
+            length=length,
+        )
 
     def relative_strength_index(
         self,

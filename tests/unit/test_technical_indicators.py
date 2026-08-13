@@ -31,3 +31,17 @@ def test_dataframe_fixture():
 
     assert not df.empty
     assert len(df) == 10
+
+def test_ema_returns_series():
+    df = sample_dataframe()
+
+    indicator = TechnicalIndicators()
+
+    ema = indicator.exponential_moving_average(
+        df,
+        length=3,
+    )
+
+    assert isinstance(ema, pd.Series)
+
+    assert len(ema) == len(df)
