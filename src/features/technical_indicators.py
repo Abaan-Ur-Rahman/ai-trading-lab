@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 import pandas as pd
+import pandas_ta_classic as ta
 
 
 class TechnicalIndicators:
     """Calculate technical indicators on OHLCV market data."""
+
+    @staticmethod
+    def _validate_close_column(dataframe: pd.DataFrame) -> None:
+        """Ensure the dataframe contains a close column."""
+        if "close" not in dataframe.columns:
+            raise ValueError("DataFrame must contain a 'close' column")
 
     def exponential_moving_average(
         self,
         dataframe: pd.DataFrame,
         length: int,
     ) -> pd.Series:
-        """Calculate EMA."""
-        import pandas_ta_classic as ta
+        """Calculate the Exponential Moving Average (EMA)."""
+
+        self._validate_close_column(dataframe)
 
         return ta.ema(
             dataframe["close"],
