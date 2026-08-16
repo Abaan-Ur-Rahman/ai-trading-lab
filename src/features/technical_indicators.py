@@ -34,16 +34,41 @@ class TechnicalIndicators:
         dataframe: pd.DataFrame,
         length: int = 14,
     ) -> pd.Series:
-        """Calculate RSI."""
-        ...
+        """Calculate the Relative Strength Index (RSI)."""
+
+        self._validate_close_column(dataframe)
+
+        return ta.rsi(
+            dataframe["close"],
+            length=length,
+        )
 
     def average_true_range(
         self,
         dataframe: pd.DataFrame,
         length: int = 14,
     ) -> pd.Series:
-        """Calculate ATR."""
-        ...
+        """Calculate the Average True Range (ATR)."""
+
+        required_columns = {
+            "high",
+            "low",
+            "close",
+        }
+
+        missing = required_columns.difference(dataframe.columns)
+
+        if missing:
+            raise ValueError(
+                "DataFrame must contain high, low, and close columns",
+            )
+
+        return ta.atr(
+            high=dataframe["high"],
+            low=dataframe["low"],
+            close=dataframe["close"],
+            length=length,
+        )
 
     def macd(
         self,

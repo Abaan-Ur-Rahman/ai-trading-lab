@@ -119,3 +119,68 @@ def test_ema_returns_series(sample_dataframe: pd.DataFrame) -> None:
 
     assert isinstance(ema, pd.Series)
     assert len(ema) == len(sample_dataframe)
+
+def test_rsi_returns_series(
+    sample_dataframe: pd.DataFrame,
+) -> None:
+    """RSI should return a pandas Series."""
+
+    indicator = TechnicalIndicators()
+
+    rsi = indicator.relative_strength_index(
+        sample_dataframe,
+        length=3,
+    )
+
+    assert isinstance(rsi, pd.Series)
+
+    assert len(rsi) == len(sample_dataframe)
+
+def test_rsi_requires_close_column() -> None:
+    """RSI should require a close column."""
+
+    indicator = TechnicalIndicators()
+
+    dataframe = pd.DataFrame(
+        {
+            "price": [1, 2, 3],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        indicator.relative_strength_index(
+            dataframe,
+            length=3,
+        )
+
+def test_atr_returns_series(
+    sample_dataframe: pd.DataFrame,
+) -> None:
+    """ATR should return a pandas Series."""
+
+    indicator = TechnicalIndicators()
+
+    atr = indicator.average_true_range(
+        sample_dataframe,
+        length=3,
+    )
+
+    assert isinstance(atr, pd.Series)
+    assert len(atr) == len(sample_dataframe)
+
+def test_atr_requires_high_low_close_columns() -> None:
+    """ATR should require high, low and close columns."""
+
+    indicator = TechnicalIndicators()
+
+    dataframe = pd.DataFrame(
+        {
+            "close": [1, 2, 3],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        indicator.average_true_range(
+            dataframe,
+            length=3,
+        )
