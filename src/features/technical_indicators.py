@@ -10,10 +10,17 @@ class TechnicalIndicators:
     """Calculate technical indicators on OHLCV market data."""
 
     @staticmethod
-    def _validate_close_column(dataframe: pd.DataFrame) -> None:
-        """Ensure the dataframe contains a close column."""
-        if "close" not in dataframe.columns:
-            raise ValueError("DataFrame must contain a 'close' column")
+    def _validate_columns(
+        dataframe: pd.DataFrame,
+        required: set[str],
+    ) -> None:
+        """Ensure the dataframe contains the required columns."""
+        missing = required.difference(dataframe.columns)
+
+        if missing:
+            raise ValueError(
+                f"DataFrame must contain columns: {sorted(missing)}",
+            )
 
     def exponential_moving_average(
         self,
@@ -22,7 +29,7 @@ class TechnicalIndicators:
     ) -> pd.Series:
         """Calculate the Exponential Moving Average (EMA)."""
 
-        self._validate_close_column(dataframe)
+        self._validate_columns(dataframe, {"close"})
 
         return ta.ema(
             dataframe["close"],
@@ -36,7 +43,7 @@ class TechnicalIndicators:
     ) -> pd.Series:
         """Calculate the Relative Strength Index (RSI)."""
 
-        self._validate_close_column(dataframe)
+        self._validate_columns(dataframe, {"close"})
 
         return ta.rsi(
             dataframe["close"],
@@ -50,18 +57,7 @@ class TechnicalIndicators:
     ) -> pd.Series:
         """Calculate the Average True Range (ATR)."""
 
-        required_columns = {
-            "high",
-            "low",
-            "close",
-        }
-
-        missing = required_columns.difference(dataframe.columns)
-
-        if missing:
-            raise ValueError(
-                "DataFrame must contain high, low, and close columns",
-            )
+        self._validate_columns(dataframe, {"high", "low", "close"})
 
         return ta.atr(
             high=dataframe["high"],
@@ -79,7 +75,7 @@ class TechnicalIndicators:
     ) -> pd.DataFrame:
         """Calculate the Moving Average Convergence Divergence (MACD)."""
 
-        self._validate_close_column(dataframe)
+        self._validate_columns(dataframe, {"close"})
 
         result = ta.macd(
             dataframe["close"],
