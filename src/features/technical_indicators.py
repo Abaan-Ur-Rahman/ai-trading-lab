@@ -73,6 +73,22 @@ class TechnicalIndicators:
     def macd(
         self,
         dataframe: pd.DataFrame,
+        fast: int = 12,
+        slow: int = 26,
+        signal: int = 9,
     ) -> pd.DataFrame:
-        """Calculate MACD."""
-        ...
+        """Calculate the Moving Average Convergence Divergence (MACD)."""
+
+        self._validate_close_column(dataframe)
+
+        result = ta.macd(
+            dataframe["close"],
+            fast=fast,
+            slow=slow,
+            signal=signal,
+        )
+
+        if result is None:
+            raise ValueError("Failed to calculate MACD")
+
+        return result

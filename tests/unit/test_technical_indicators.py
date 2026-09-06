@@ -184,3 +184,44 @@ def test_atr_requires_high_low_close_columns() -> None:
             dataframe,
             length=3,
         )
+
+def test_macd_returns_dataframe(
+    sample_dataframe: pd.DataFrame,
+) -> None:
+    """MACD should return a pandas DataFrame."""
+
+    indicator = TechnicalIndicators()
+
+    macd = indicator.macd(
+        sample_dataframe,
+        fast=3,
+        slow=6,
+        signal=2,
+    )
+
+    assert isinstance(macd, pd.DataFrame)
+    assert len(macd) == len(sample_dataframe)
+
+def test_macd_requires_close_column() -> None:
+    """MACD should require a close column."""
+
+    indicator = TechnicalIndicators()
+
+    dataframe = pd.DataFrame(
+        {
+            "price": [1, 2, 3],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        indicator.macd(dataframe)
+
+def test_macd_raises_when_result_is_none(
+    sample_dataframe: pd.DataFrame,
+) -> None:
+    """MACD should raise ValueError when pandas_ta_classic cannot compute a result."""
+
+    indicator = TechnicalIndicators()
+
+    with pytest.raises(ValueError):
+        indicator.macd(sample_dataframe)
