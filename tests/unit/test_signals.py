@@ -33,14 +33,56 @@ def test_signal_result_rejects_out_of_range_confidence() -> None:
         SignalResult(direction=Signal.BUY, confidence=1.5)
 
 
-def test_rsi_signal_not_yet_implemented(
-    sample_dataframe: pd.DataFrame,
-) -> None:
-    """rsi_signal has no logic yet."""
+def test_rsi_signal_detects_buy() -> None:
+    """RSI at or below oversold should signal BUY."""
     generator = SignalGenerator()
 
-    with pytest.raises(NotImplementedError):
-        generator.rsi_signal(sample_dataframe)
+    dataframe = pd.DataFrame(
+        {"close": [100, 98, 96, 94, 92, 90, 88, 86]},
+    )
+
+    result = generator.rsi_signal(dataframe, length=6)
+
+    assert result.direction == Signal.BUY
+    assert result.confidence == 1.0
+
+
+def test_rsi_signal_detects_sell() -> None:
+    """RSI at or above overbought should signal SELL."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [100, 102, 104, 106, 108, 110, 112, 114]},
+    )
+
+    result = generator.rsi_signal(dataframe, length=6)
+
+    assert result.direction == Signal.SELL
+    assert result.confidence == 1.0
+
+
+def test_rsi_signal_detects_hold() -> None:
+    """RSI between thresholds should signal HOLD."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [100, 101, 100, 101, 100, 101, 100, 101]},
+    )
+
+    result = generator.rsi_signal(dataframe, length=6)
+
+    assert result.direction == Signal.HOLD
+    assert result.confidence == 0.0
+
+
+def test_rsi_signal_requires_oversold_less_than_overbought() -> None:
+    """oversold must be strictly less than overbought."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame({"close": [100] * 10})
+
+    with pytest.raises(ValueError):
+        generator.rsi_signal(dataframe, oversold=70, overbought=30)
 
 
 def test_macd_signal_not_yet_implemented(

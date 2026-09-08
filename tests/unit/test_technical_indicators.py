@@ -225,3 +225,13 @@ def test_macd_raises_when_result_is_none(
 
     with pytest.raises(ValueError):
         indicator.macd(sample_dataframe)
+
+def test_rsi_raises_when_result_is_none(
+    sample_dataframe: pd.DataFrame,
+) -> None:
+    """RSI should raise ValueError when there isn't enough data."""
+
+    indicator = TechnicalIndicators()
+
+    with pytest.raises(ValueError):
+        indicator.relative_strength_index(sample_dataframe)

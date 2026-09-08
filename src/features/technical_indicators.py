@@ -45,11 +45,16 @@ class TechnicalIndicators:
 
         self._validate_columns(dataframe, {"close"})
 
-        return ta.rsi(
+        result = ta.rsi(
             dataframe["close"],
             length=length,
         )
 
+        if result is None:
+            raise ValueError("Failed to calculate RSI")
+
+        return result
+    
     def average_true_range(
         self,
         dataframe: pd.DataFrame,

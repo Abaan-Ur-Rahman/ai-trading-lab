@@ -69,9 +69,28 @@ class SignalGenerator:
     def rsi_signal(
         self,
         dataframe: pd.DataFrame,
+        length: int = 14,
+        oversold: float = 30.0,
+        overbought: float = 70.0,
     ) -> SignalResult:
-        """Generate a signal based on RSI thresholds."""
-        raise NotImplementedError
+        """Generate a signal based on the latest RSI value.
+
+        Confidence is binary at this stage (1.0 for a threshold breach,
+        0.0 for no breach). Step 7 will replace this with a proper score.
+        """
+        if oversold >= overbought:
+            raise ValueError("oversold threshold must be less than overbought threshold")
+
+        rsi = self._indicators.relative_strength_index(dataframe, length=length)
+        latest_rsi = rsi.iloc[-1]
+
+        if latest_rsi <= oversold:
+            return SignalResult(direction=Signal.BUY, confidence=1.0)
+
+        if latest_rsi >= overbought:
+            return SignalResult(direction=Signal.SELL, confidence=1.0)
+
+        return SignalResult(direction=Signal.HOLD, confidence=0.0)
 
     def macd_signal(
         self,
