@@ -85,14 +85,58 @@ def test_rsi_signal_requires_oversold_less_than_overbought() -> None:
         generator.rsi_signal(dataframe, oversold=70, overbought=30)
 
 
-def test_macd_signal_not_yet_implemented(
-    sample_dataframe: pd.DataFrame,
-) -> None:
-    """macd_signal has no logic yet."""
+def test_macd_signal_detects_buy() -> None:
+    """MACD line crossing above signal line should signal BUY."""
     generator = SignalGenerator()
 
-    with pytest.raises(NotImplementedError):
-        generator.macd_signal(sample_dataframe)
+    dataframe = pd.DataFrame(
+        {"close": [110, 108, 106, 104, 102, 100, 98, 130]},
+    )
+
+    result = generator.macd_signal(dataframe, fast=3, slow=6, signal=2)
+
+    assert result.direction == Signal.BUY
+    assert result.confidence == 1.0
+
+
+def test_macd_signal_detects_sell() -> None:
+    """MACD line crossing below signal line should signal SELL."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [90, 92, 94, 96, 98, 100, 102, 60]},
+    )
+
+    result = generator.macd_signal(dataframe, fast=3, slow=6, signal=2)
+
+    assert result.direction == Signal.SELL
+    assert result.confidence == 1.0
+
+
+def test_macd_signal_detects_hold() -> None:
+    """No crossover should signal HOLD."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [100] * 10},
+    )
+
+    result = generator.macd_signal(dataframe, fast=3, slow=6, signal=2)
+
+    assert result.direction == Signal.HOLD
+    assert result.confidence == 0.0
+
+
+def test_macd_signal_requires_enough_data() -> None:
+    """Not enough data for a full crossover comparison should raise ValueError."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [100, 101, 102, 103, 104, 105, 106]},
+    )
+
+    with pytest.raises(ValueError):
+        generator.macd_signal(dataframe, fast=3, slow=6, signal=2)
 
 
 def test_combined_signal_not_yet_implemented(

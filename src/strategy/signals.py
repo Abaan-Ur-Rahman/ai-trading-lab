@@ -95,10 +95,33 @@ class SignalGenerator:
     def macd_signal(
         self,
         dataframe: pd.DataFrame,
+        fast: int = 12,
+        slow: int = 26,
+        signal: int = 9,
     ) -> SignalResult:
-        """Generate a signal based on MACD."""
-        raise NotImplementedError
+        """Generate a signal based on the MACD line crossing its signal line.
 
+        Confidence is binary at this stage (1.0 for a confirmed cross,
+        0.0 for no cross). Step 7 will replace this with a proper score.
+        """
+        macd_df = self._indicators.macd(dataframe, fast=fast, slow=slow, signal=signal)
+
+        macd_line = macd_df[f"MACD_{fast}_{slow}_{signal}"]
+        signal_line = macd_df[f"MACDs_{fast}_{slow}_{signal}"]
+
+        prev_macd, curr_macd = macd_line.iloc[-2], macd_line.iloc[-1]
+        prev_signal, curr_signal = signal_line.iloc[-2], signal_line.iloc[-1]
+
+        if pd.isna(prev_macd) or pd.isna(curr_macd) or pd.isna(prev_signal) or pd.isna(curr_signal):
+            raise ValueError("Not enough data to detect a MACD crossover")
+
+        if prev_macd <= prev_signal and curr_macd > curr_signal:
+            return SignalResult(direction=Signal.BUY, confidence=1.0)
+
+        if prev_macd >= prev_signal and curr_macd < curr_signal:
+            return SignalResult(direction=Signal.SELL, confidence=1.0)
+
+        return SignalResult(direction=Signal.HOLD, confidence=0.0)
     def combined_signal(
         self,
         dataframe: pd.DataFrame,
