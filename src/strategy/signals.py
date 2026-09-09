@@ -84,6 +84,9 @@ class SignalGenerator:
         rsi = self._indicators.relative_strength_index(dataframe, length=length)
         latest_rsi = rsi.iloc[-1]
 
+        if pd.isna(latest_rsi):
+            raise ValueError("Not enough data to compute a valid RSI value")
+
         if latest_rsi <= oversold:
             return SignalResult(direction=Signal.BUY, confidence=1.0)
 
@@ -122,9 +125,51 @@ class SignalGenerator:
             return SignalResult(direction=Signal.SELL, confidence=1.0)
 
         return SignalResult(direction=Signal.HOLD, confidence=0.0)
+
     def combined_signal(
         self,
         dataframe: pd.DataFrame,
+        ema_fast: int = 12,
+        ema_slow: int = 26,
+        rsi_length: int = 14,
+        rsi_oversold: float = 30.0,
+        rsi_overbought: float = 70.0,
+        macd_fast: int = 12,
+        macd_slow: int = 26,
+        macd_signal_length: int = 9,
     ) -> SignalResult:
-        """Combine multiple signals into a single confidence-scored signal."""
-        raise NotImplementedError
+        """Combine EMA crossover, RSI, and MACD signals via majority vote.
+
+        Confidence reflects the proportion of the three signals that agree
+        with the winning direction (e.g. 2/3 ~= 0.67, 3/3 = 1.0). If no
+        direction has a majority (all three differ), the result is HOLD
+        with confidence 0.0.
+        """
+        ema_result = self.ema_crossover(dataframe, fast=ema_fast, slow=ema_slow)
+        rsi_result = self.rsi_signal(
+            dataframe,
+            length=rsi_length,
+            oversold=rsi_oversold,
+            overbought=rsi_overbought,
+        )
+        macd_result = self.macd_signal(
+            dataframe,
+            fast=macd_fast,
+            slow=macd_slow,
+            signal=macd_signal_length,
+        )
+
+        directions = [ema_result.direction, rsi_result.direction, macd_result.direction]
+
+        vote_counts = {
+            direction: directions.count(direction) for direction in set(directions)
+        }
+        winning_direction, winning_votes = max(vote_counts.items(), key=lambda item: item[1])
+
+        if winning_votes < 2:
+            return SignalResult(direction=Signal.HOLD, confidence=0.0)
+
+        return SignalResult(
+            direction=winning_direction,
+            confidence=winning_votes / len(directions),
+        )
