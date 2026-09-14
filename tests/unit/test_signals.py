@@ -278,3 +278,116 @@ def test_ema_crossover_requires_enough_rows() -> None:
 
     with pytest.raises(ValueError):
         generator.ema_crossover(dataframe, fast=3, slow=6)
+
+def test_ema_crossover_partial_confidence() -> None:
+    """A mild crossover should produce confidence strictly between 0 and 1."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [110, 108, 106, 104, 102, 100, 98, 115]},
+    )
+
+    result = generator.ema_crossover(dataframe, fast=3, slow=6)
+
+    assert result.direction == Signal.BUY
+    assert 0.0 < result.confidence < 1.0
+
+
+def test_ema_crossover_requires_positive_max_gap_pct() -> None:
+    """max_gap_pct must be greater than 0."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame({"close": [100] * 10})
+
+    with pytest.raises(ValueError):
+        generator.ema_crossover(dataframe, fast=3, slow=6, max_gap_pct=0.0)
+
+
+def test_rsi_signal_partial_confidence_buy() -> None:
+    """A mild oversold reading should produce confidence strictly between 0 and 1."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [100, 99, 100, 98, 97, 96, 95, 94]},
+    )
+
+    result = generator.rsi_signal(dataframe, length=6)
+
+    assert result.direction == Signal.BUY
+    assert 0.0 < result.confidence < 1.0
+
+
+def test_rsi_signal_partial_confidence_sell() -> None:
+    """A mild overbought reading should produce confidence strictly between 0 and 1."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [100, 101, 100, 102, 103, 104, 105, 106]},
+    )
+
+    result = generator.rsi_signal(dataframe, length=6)
+
+    assert result.direction == Signal.SELL
+    assert 0.0 < result.confidence < 1.0
+
+
+def test_rsi_signal_requires_oversold_in_valid_range() -> None:
+    """oversold must be strictly between 0 and 100."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame({"close": [100] * 10})
+
+    with pytest.raises(ValueError):
+        generator.rsi_signal(dataframe, oversold=0, overbought=70)
+
+
+def test_rsi_signal_requires_overbought_in_valid_range() -> None:
+    """overbought must be strictly between 0 and 100."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame({"close": [100] * 10})
+
+    with pytest.raises(ValueError):
+        generator.rsi_signal(dataframe, oversold=30, overbought=100)
+
+
+def test_macd_signal_partial_confidence() -> None:
+    """A mild histogram should produce confidence strictly between 0 and 1."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [110, 108, 106, 104, 102, 100, 98, 104]},
+    )
+
+    result = generator.macd_signal(dataframe, fast=3, slow=6, signal=2)
+
+    assert result.direction == Signal.BUY
+    assert 0.0 < result.confidence < 1.0
+
+
+def test_macd_signal_requires_positive_max_histogram_pct() -> None:
+    """max_histogram_pct must be greater than 0."""
+    generator = SignalGenerator()
+
+    dataframe = pd.DataFrame(
+        {"close": [110, 108, 106, 104, 102, 100, 98, 130]},
+    )
+
+    with pytest.raises(ValueError):
+        generator.macd_signal(dataframe, fast=3, slow=6, signal=2, max_histogram_pct=0.0)
+
+
+def test_combined_signal_weights_by_confidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Combined confidence should reflect signal strength, not just vote count."""
+    generator = SignalGenerator()
+
+    monkeypatch.setattr(generator, "ema_crossover", _mock_signal(Signal.BUY, confidence=0.9))
+    monkeypatch.setattr(generator, "rsi_signal", _mock_signal(Signal.BUY, confidence=0.8))
+    monkeypatch.setattr(generator, "macd_signal", _mock_signal(Signal.SELL, confidence=1.0))
+
+    dataframe = pd.DataFrame({"close": [100] * 10})
+
+    result = generator.combined_signal(dataframe)
+
+    assert result.direction == Signal.BUY
+    assert result.confidence == pytest.approx((0.9 + 0.8) / 2 * (2 / 3))

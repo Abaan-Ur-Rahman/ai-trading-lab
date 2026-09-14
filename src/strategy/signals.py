@@ -31,19 +31,36 @@ class SignalGenerator:
     def __init__(self, indicators: TechnicalIndicators | None = None) -> None:
         self._indicators = indicators or TechnicalIndicators()
 
+    @staticmethod
+    def _scale_confidence(value: float, cap: float) -> float:
+        """Scale a non-negative magnitude to [0, 1], capping at `cap`.
+
+        `cap` represents the magnitude treated as "maximum confidence".
+        This is a placeholder calibration until it can be tuned against
+        real backtest results.
+        """
+        if cap <= 0:
+            return 0.0
+        return min(abs(value) / cap, 1.0)
+
     def ema_crossover(
         self,
         dataframe: pd.DataFrame,
         fast: int = 12,
         slow: int = 26,
+        max_gap_pct: float = 0.02,
     ) -> SignalResult:
         """Generate a signal based on EMA crossover.
 
-        Confidence is binary at this stage (1.0 for a confirmed cross,
-        0.0 for no cross). Step 7 will replace this with a proper score.
+        Confidence reflects how wide the gap between the fast and slow EMA
+        is, as a percentage of price, relative to `max_gap_pct` (the gap
+        size at which confidence saturates at 1.0).
         """
         if fast >= slow:
             raise ValueError("fast length must be less than slow length")
+
+        if max_gap_pct <= 0:
+            raise ValueError("max_gap_pct must be greater than 0")
 
         min_required_rows = slow + 1
         if len(dataframe) < min_required_rows:
@@ -58,11 +75,17 @@ class SignalGenerator:
         prev_fast, curr_fast = fast_ema.iloc[-2], fast_ema.iloc[-1]
         prev_slow, curr_slow = slow_ema.iloc[-2], slow_ema.iloc[-1]
 
+        if curr_slow <= 0:
+            raise ValueError("slow EMA must be positive to compute confidence")
+
+        gap_pct = abs(curr_fast - curr_slow) / curr_slow
+        confidence = min(gap_pct / max_gap_pct, 1.0)
+
         if prev_fast <= prev_slow and curr_fast > curr_slow:
-            return SignalResult(direction=Signal.BUY, confidence=1.0)
+            return SignalResult(direction=Signal.BUY, confidence=confidence)
 
         if prev_fast >= prev_slow and curr_fast < curr_slow:
-            return SignalResult(direction=Signal.SELL, confidence=1.0)
+            return SignalResult(direction=Signal.SELL, confidence=confidence)
 
         return SignalResult(direction=Signal.HOLD, confidence=0.0)
 
@@ -75,11 +98,17 @@ class SignalGenerator:
     ) -> SignalResult:
         """Generate a signal based on the latest RSI value.
 
-        Confidence is binary at this stage (1.0 for a threshold breach,
-        0.0 for no breach). Step 7 will replace this with a proper score.
+        Confidence reflects how far past the threshold RSI has moved,
+        normalized to the room available on that side of the 0-100 scale.
         """
         if oversold >= overbought:
             raise ValueError("oversold threshold must be less than overbought threshold")
+
+        if not (0 < oversold < 100):
+            raise ValueError("oversold must be strictly between 0 and 100")
+
+        if not (0 < overbought < 100):
+            raise ValueError("overbought must be strictly between 0 and 100")
 
         rsi = self._indicators.relative_strength_index(dataframe, length=length)
         latest_rsi = rsi.iloc[-1]
@@ -88,10 +117,12 @@ class SignalGenerator:
             raise ValueError("Not enough data to compute a valid RSI value")
 
         if latest_rsi <= oversold:
-            return SignalResult(direction=Signal.BUY, confidence=1.0)
+            confidence = min((oversold - latest_rsi) / oversold, 1.0)
+            return SignalResult(direction=Signal.BUY, confidence=confidence)
 
         if latest_rsi >= overbought:
-            return SignalResult(direction=Signal.SELL, confidence=1.0)
+            confidence = min((latest_rsi - overbought) / (100 - overbought), 1.0)
+            return SignalResult(direction=Signal.SELL, confidence=confidence)
 
         return SignalResult(direction=Signal.HOLD, confidence=0.0)
 
@@ -101,12 +132,16 @@ class SignalGenerator:
         fast: int = 12,
         slow: int = 26,
         signal: int = 9,
+        max_histogram_pct: float = 0.01,
     ) -> SignalResult:
         """Generate a signal based on the MACD line crossing its signal line.
 
-        Confidence is binary at this stage (1.0 for a confirmed cross,
-        0.0 for no cross). Step 7 will replace this with a proper score.
+        Confidence reflects how wide the MACD histogram is, as a
+        percentage of price, relative to `max_histogram_pct`.
         """
+        if max_histogram_pct <= 0:
+            raise ValueError("max_histogram_pct must be greater than 0")
+
         macd_df = self._indicators.macd(dataframe, fast=fast, slow=slow, signal=signal)
 
         macd_line = macd_df[f"MACD_{fast}_{slow}_{signal}"]
@@ -118,11 +153,19 @@ class SignalGenerator:
         if pd.isna(prev_macd) or pd.isna(curr_macd) or pd.isna(prev_signal) or pd.isna(curr_signal):
             raise ValueError("Not enough data to detect a MACD crossover")
 
+        latest_close = dataframe["close"].iloc[-1]
+
+        if latest_close <= 0:
+            raise ValueError("latest close must be positive to compute confidence")
+
+        histogram_pct = abs(curr_macd - curr_signal) / latest_close
+        confidence = min(histogram_pct / max_histogram_pct, 1.0)
+
         if prev_macd <= prev_signal and curr_macd > curr_signal:
-            return SignalResult(direction=Signal.BUY, confidence=1.0)
+            return SignalResult(direction=Signal.BUY, confidence=confidence)
 
         if prev_macd >= prev_signal and curr_macd < curr_signal:
-            return SignalResult(direction=Signal.SELL, confidence=1.0)
+            return SignalResult(direction=Signal.SELL, confidence=confidence)
 
         return SignalResult(direction=Signal.HOLD, confidence=0.0)
 
@@ -140,10 +183,10 @@ class SignalGenerator:
     ) -> SignalResult:
         """Combine EMA crossover, RSI, and MACD signals via majority vote.
 
-        Confidence reflects the proportion of the three signals that agree
-        with the winning direction (e.g. 2/3 ~= 0.67, 3/3 = 1.0). If no
-        direction has a majority (all three differ), the result is HOLD
-        with confidence 0.0.
+        Confidence blends breadth (how many signals agree) with depth
+        (how strongly the agreeing signals feel about it): the average
+        confidence of the signals that voted for the winning direction,
+        scaled by the fraction of signals that agree.
         """
         ema_result = self.ema_crossover(dataframe, fast=ema_fast, slow=ema_slow)
         rsi_result = self.rsi_signal(
@@ -159,7 +202,8 @@ class SignalGenerator:
             signal=macd_signal_length,
         )
 
-        directions = [ema_result.direction, rsi_result.direction, macd_result.direction]
+        results = [ema_result, rsi_result, macd_result]
+        directions = [result.direction for result in results]
 
         vote_counts = {
             direction: directions.count(direction) for direction in set(directions)
@@ -169,7 +213,12 @@ class SignalGenerator:
         if winning_votes < 2:
             return SignalResult(direction=Signal.HOLD, confidence=0.0)
 
+        winning_confidences = [
+            result.confidence for result in results if result.direction == winning_direction
+        ]
+        average_confidence = sum(winning_confidences) / len(winning_confidences)
+
         return SignalResult(
             direction=winning_direction,
-            confidence=winning_votes / len(directions),
+            confidence=average_confidence * (winning_votes / len(directions)),
         )
