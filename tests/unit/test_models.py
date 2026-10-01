@@ -130,3 +130,9 @@ def test_predict_proba_reindexes_regardless_of_classes_order(
     assert result.iloc[0]["SELL"] == pytest.approx(0.5)
     assert result.iloc[0]["HOLD"] == pytest.approx(0.3)
     assert result.iloc[0]["BUY"] == pytest.approx(0.2)
+
+def test_get_hyperparameters_returns_class_weight_and_random_state() -> None:
+    """get_hyperparameters() should expose class_weight and random_state."""
+    model = LogisticRegressionModel(class_weight="balanced", random_state=7)
+
+    assert model.get_hyperparameters() == {"class_weight": "balanced", "random_state": 7}

@@ -67,3 +67,10 @@ class LogisticRegressionModel(ModelWrapper):
         proba = pd.DataFrame(raw_proba, columns=raw_columns, index=X.index)
 
         return proba[CLASS_NAMES]
+
+    def get_hyperparameters(self) -> dict:
+        """Return this model's hyperparameters as a plain dict."""
+        return {
+            "class_weight": self._class_weight,
+            "random_state": self._random_state,
+        }

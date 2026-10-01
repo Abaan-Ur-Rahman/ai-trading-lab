@@ -30,3 +30,7 @@ class ModelWrapper(ABC):
     @abstractmethod
     def predict_proba(self, X: pd.DataFrame) -> pd.DataFrame:
         """Return class probabilities with columns in [SELL, HOLD, BUY] order."""
+
+    @abstractmethod
+    def get_hyperparameters(self) -> dict:
+        """Return this model's hyperparameters as a plain dict, for metadata/logging."""
