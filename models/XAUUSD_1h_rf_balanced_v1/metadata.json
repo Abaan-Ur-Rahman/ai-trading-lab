@@ -21,16 +21,16 @@
   "threshold": 0.005,
   "symbol": "XAU/USD",
   "timeframe": "1h",
-  "train_start": "2026-03-08 17:00:00+00:00",
-  "train_end": "2026-07-31 10:00:00+00:00",
-  "val_start": "2026-07-31 16:00:00+00:00",
-  "val_end": "2026-08-31 10:00:00+00:00",
-  "test_start": "2026-08-31 16:00:00+00:00",
-  "test_end": "2026-10-01 11:00:00+00:00",
+  "train_start": "2023-11-15 11:00:00+00:00",
+  "train_end": "2026-01-25 01:00:00+00:00",
+  "val_start": "2026-01-25 07:00:00+00:00",
+  "val_end": "2026-05-29 20:00:00+00:00",
+  "test_start": "2026-05-30 02:00:00+00:00",
+  "test_end": "2026-10-01 15:00:00+00:00",
   "class_distribution": {
-    "SELL": 563,
-    "HOLD": 2440,
-    "BUY": 470
+    "SELL": 1156,
+    "HOLD": 11270,
+    "BUY": 1547
   },
   "python_version": "3.13.0",
   "pandas_version": "3.0.5",
@@ -40,39 +40,39 @@
     "classification": {
       "per_class": {
         "SELL": {
-          "precision": 0.2196969696969697,
-          "recall": 0.5370370370370371,
-          "f1": 0.3118279569892473,
-          "support": 108
+          "precision": 0.17159277504105092,
+          "recall": 0.49061032863849763,
+          "f1": 0.2542579075425791,
+          "support": 426
         },
         "HOLD": {
-          "precision": 0.9457013574660633,
-          "recall": 0.3813868613138686,
-          "f1": 0.5435630689206762,
-          "support": 548
+          "precision": 0.7560483870967742,
+          "recall": 0.3451449608835711,
+          "f1": 0.47393364928909953,
+          "support": 2173
         },
         "BUY": {
-          "precision": 0.16470588235294117,
-          "recall": 0.5,
-          "f1": 0.24778761061946902,
-          "support": 84
+          "precision": 0.0858974358974359,
+          "recall": 0.17135549872122763,
+          "f1": 0.11443210930828351,
+          "support": 391
         }
       },
       "confusion_matrix": [
         [
-          58,
-          7,
-          43
-        ],
-        [
-          169,
           209,
-          170
+          142,
+          75
         ],
         [
-          37,
-          5,
-          42
+          785,
+          750,
+          638
+        ],
+        [
+          224,
+          100,
+          67
         ]
       ],
       "confusion_matrix_labels": [
@@ -80,27 +80,27 @@
         "HOLD",
         "BUY"
       ],
-      "macro_f1": 0.3677262121764642,
-      "accuracy": 0.4175675675675676,
-      "log_loss": 0.9474498435983627,
-      "brier_score": 0.5591794280608919
+      "macro_f1": 0.28087455537998735,
+      "accuracy": 0.3431438127090301,
+      "log_loss": 1.1676020492331909,
+      "brier_score": 0.705371821599047
     },
     "trading": {
       "evaluation_type": "signal-quality evaluation (independent per-row trades), not a portfolio backtest",
-      "cumulative_return": -0.0043906362418357926,
-      "sharpe_ratio": -0.03691067352627811,
+      "cumulative_return": -0.2959729670177885,
+      "sharpe_ratio": -0.062075190006364994,
       "sharpe_ratio_note": "raw mean/std ratio over evaluated rows; not annualized (timeframe unknown at this layer)",
-      "max_drawdown": 0.004390636241835777,
-      "hit_rate": 0.0,
-      "n_rows_evaluated": 735,
-      "n_trades_taken": 1
+      "max_drawdown": 0.3187803681717494,
+      "hit_rate": 0.38235294117647056,
+      "n_rows_evaluated": 2985,
+      "n_trades_taken": 204
     },
     "feature_importances": {
-      "log_return": 0.23936911661557203,
-      "ema_gap_pct": 0.12998035340877526,
-      "rsi": 0.08891219917743962,
-      "atr_pct": 0.4170529368747615,
-      "macd_hist_pct": 0.12468539392345161
+      "log_return": 0.11907784755602306,
+      "ema_gap_pct": 0.16858360333544542,
+      "rsi": 0.09376940476040095,
+      "atr_pct": 0.5180586858673978,
+      "macd_hist_pct": 0.1005104584807329
     }
   }
 }

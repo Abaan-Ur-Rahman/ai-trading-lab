@@ -41,7 +41,7 @@ TIMEFRAME = "1h"
 RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
 EXPERIMENT_LOG_PATH = PROJECT_ROOT / "experiments" / "experiments.jsonl"
 
-FETCH_LIMIT = 5000
+TOTAL_CANDLES = 20_000  # ~2.3 years of 1h XAUUSD data, via paginated fetch
 HORIZON = 5
 THRESHOLD = 0.005
 TRAIN_PCT = 0.70
@@ -72,9 +72,10 @@ def load_or_fetch_raw_ohlcv(repository: CSVRepository, provider) -> pd.DataFrame
         raw["timestamp"] = pd.to_datetime(raw["timestamp"])
         return raw.set_index("timestamp")
 
-    print(f"No cached data found. Fetching {FETCH_LIMIT} candles of {SYMBOL} {TIMEFRAME}...")
+    print(f"No cached data found. Fetching {TOTAL_CANDLES} candles of {SYMBOL} {TIMEFRAME} "
+          f"(paginated, ~{-(-TOTAL_CANDLES // 5000)} requests)...")
     service = MarketDataService(provider)
-    candles = service.get_recent_candles(symbol=SYMBOL, timeframe=TIMEFRAME, limit=FETCH_LIMIT)
+    candles = service.get_historical_candles(symbol=SYMBOL, timeframe=TIMEFRAME, total_candles=TOTAL_CANDLES)
     raw = candles_to_dataframe(candles)
     print(f"Fetched {len(raw)} candles.")
 

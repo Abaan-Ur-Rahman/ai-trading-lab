@@ -9,7 +9,7 @@ import pytest
 from features.pipeline import build_feature_dataset
 
 
-def _make_ohlc_dataframe(rows: int = 20, seed: int = 42) -> pd.DataFrame:
+def _make_ohlc_dataframe(rows: int = 30, seed: int = 42) -> pd.DataFrame:
     """Build a reproducible synthetic OHLC dataframe for pipeline tests."""
     rng = np.random.default_rng(seed)
     close = pd.Series(100 + np.cumsum(rng.standard_normal(rows)), dtype=float)
@@ -75,25 +75,25 @@ def test_build_feature_dataset_does_not_mutate_input() -> None:
 def test_build_feature_dataset_prevents_look_ahead_bias() -> None:
     """Mutating future OHLC rows must not change earlier feature/label rows.
 
-    This is the leakage test: row 10 sits well past every indicator's
+    This is the leakage test: row 30 sits well past every indicator's
     warm-up window (trailing-only, so unaffected by future data by
-    construction) and well before row 19 within the label horizon
-    (horizon=2, so row 10's label only reads row 12 — nowhere near
-    row 19). If row 10 changes after mutating row 19, something in the
+    construction) and well before row 49 within the label horizon
+    (horizon=2, so row 30's label only reads row 32 — nowhere near
+    row 49). If row 30 changes after mutating row 49, something in the
     pipeline is leaking future information into the past.
     """
-    dataframe = _make_ohlc_dataframe(rows=20)
+    dataframe = _make_ohlc_dataframe(rows=50)
 
     baseline = build_feature_dataset(dataframe, min_rows=1, **_SMALL_PERIODS)
 
     mutated = dataframe.copy(deep=True)
-    mutated.loc[19, ["close", "high", "low"]] = [99999.0, 100000.0, 99998.0]
+    mutated.loc[49, ["close", "high", "low"]] = [99999.0, 100000.0, 99998.0]
 
     result = build_feature_dataset(mutated, min_rows=1, **_SMALL_PERIODS)
 
-    assert 10 in baseline.index
-    assert 10 in result.index
-    pd.testing.assert_series_equal(baseline.loc[10], result.loc[10])
+    assert 30 in baseline.index
+    assert 30 in result.index
+    pd.testing.assert_series_equal(baseline.loc[30], result.loc[30])
 
 def test_build_feature_dataset_preserves_original_ohlc_columns() -> None:
     """Original OHLC columns must survive in the output.
