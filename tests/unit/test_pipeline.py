@@ -94,3 +94,20 @@ def test_build_feature_dataset_prevents_look_ahead_bias() -> None:
     assert 10 in baseline.index
     assert 10 in result.index
     pd.testing.assert_series_equal(baseline.loc[10], result.loc[10])
+
+def test_build_feature_dataset_preserves_original_ohlc_columns() -> None:
+    """Original OHLC columns must survive in the output.
+
+    Downstream trading evaluation needs real close prices to compute
+    realized returns. This is a deliberate design decision, not
+    incidental, and this test locks it in so a future refactor can't
+    silently drop these columns again.
+    """
+    dataframe = _make_ohlc_dataframe()
+
+    dataset = build_feature_dataset(dataframe, min_rows=1, **_SMALL_PERIODS)
+
+    assert "close" in dataset.columns
+    assert "high" in dataset.columns
+    assert "low" in dataset.columns
+    pd.testing.assert_series_equal(dataset["close"], dataframe.loc[dataset.index, "close"])

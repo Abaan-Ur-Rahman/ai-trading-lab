@@ -23,11 +23,20 @@ def build_feature_dataset(
     threshold: float = 0.005,
     min_rows: int = 100,
 ) -> pd.DataFrame:
-    """Build a complete ML-ready dataset: features + label, with zero NaNs.
+    """Build a complete ML-ready dataset: original OHLC + features + label.
 
-    Combines build_features and create_labels, drops any row containing a
-    NaN in any column (indicator warm-up at the start, label horizon at
-    the end), and raises ValueError if fewer than `min_rows` remain.
+    Combines the original OHLC columns, build_features' engineered
+    columns, and create_labels' label column into a single dataset, then
+    drops any row containing a NaN in any column (indicator warm-up at
+    the start, label horizon at the end). Raises ValueError if fewer than
+    `min_rows` remain.
+
+    The original OHLC columns are kept, not just the engineered features,
+    because downstream trading evaluation needs real close prices to
+    compute realized returns -- separate_features_and_target (in
+    ml/dataset.py) already handles selecting only FEATURE_COLUMNS out of
+    whatever this returns, so carrying extra columns through here is safe
+    and doesn't leak into the model's inputs.
 
     Does not mutate the input dataframe.
     """
@@ -50,7 +59,8 @@ def build_feature_dataset(
 
     labels = create_labels(dataframe, horizon=horizon, threshold=threshold)
 
-    dataset = features.copy()
+    dataset = dataframe.copy()
+    dataset[features.columns] = features
     dataset["label"] = labels
     dataset = dataset.dropna()
 
