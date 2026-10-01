@@ -33,6 +33,7 @@ from ml.experiment_tracking import log_experiment
 from ml.models.logistic_regression import LogisticRegressionModel
 from ml.persistence import ModelMetadata, current_library_versions, save_model
 from ml.training import train_model
+from ml.models.random_forest import RandomForestModel
 
 SYMBOL = "XAU/USD"
 SYMBOL_FOR_FILENAMES = "XAUUSD"
@@ -52,6 +53,9 @@ TRANSACTION_COST_PCT = 0.0005
 
 _CLASS_WEIGHT_TAG = CLASS_WEIGHT if CLASS_WEIGHT is not None else "none"
 MODEL_DIRECTORY = PROJECT_ROOT / "models" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_logreg_{_CLASS_WEIGHT_TAG}_v1"
+RF_CLASS_WEIGHT = "balanced"
+_RF_CLASS_WEIGHT_TAG = RF_CLASS_WEIGHT if RF_CLASS_WEIGHT is not None else "none"
+RF_MODEL_DIRECTORY = PROJECT_ROOT / "models" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_rf_{_RF_CLASS_WEIGHT_TAG}_v1"
 
 
 def load_or_fetch_raw_ohlcv(repository: CSVRepository, provider) -> pd.DataFrame:
@@ -102,6 +106,7 @@ def main(provider=None) -> None:
     X_train, y_train = separate_features_and_target(result.train)
     X_val, y_val = separate_features_and_target(result.val)
     X_test, y_test = separate_features_and_target(result.test)
+    X_train_scaled = apply_scaler(result.scaler, X_train)
     X_val_scaled = apply_scaler(result.scaler, X_val)
     X_test_scaled = apply_scaler(result.scaler, X_test)
 
@@ -177,6 +182,81 @@ def main(provider=None) -> None:
     print(f"Model saved to {MODEL_DIRECTORY}")
 
     log_experiment(EXPERIMENT_LOG_PATH, metadata, MODEL_DIRECTORY, notes="First MVP end-to-end run")
+    print(f"Experiment logged to {EXPERIMENT_LOG_PATH}")
+
+    # --- Candidate comparison: Random Forest, validation set only ---
+    # Not evaluated on test yet -- we're still choosing between this and
+    # Logistic Regression. Whichever wins on validation gets ONE final
+    # test-set run; this one doesn't touch test until that decision is made.
+    rf_model = RandomForestModel(class_weight=RF_CLASS_WEIGHT, random_state=RANDOM_STATE)
+    rf_model.fit(X_train_scaled, y_train)
+
+    rf_val_pred = rf_model.predict(X_val_scaled)
+    rf_val_proba = rf_model.predict_proba(X_val_scaled)
+
+    print("\n=== Random Forest -- classification report (VALIDATION set) ===")
+    print(classification_report(y_val, rf_val_pred, rf_val_proba))
+
+    print("\n=== Random Forest -- trading report (VALIDATION set) ===")
+    print(trading_report(
+        rf_val_pred, rf_val_proba, result.val, horizon=HORIZON,
+        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
+    ))
+
+    print("\n=== Random Forest -- feature importances ===")
+    print(rf_model.get_feature_importances())
+
+    # Decision made on validation evidence: Random Forest outperforms
+    # Logistic Regression (macro-F1 0.407 vs 0.367, more balanced per-class
+    # recall). This is now the FINAL, one-time test-set check for the
+    # chosen model -- not a comparison.
+    rf_pred = rf_model.predict(X_test_scaled)
+    rf_proba = rf_model.predict_proba(X_test_scaled)
+
+    print("\n=== Random Forest -- classification report (TEST set, final check only) ===")
+    rf_classification = classification_report(y_test, rf_pred, rf_proba)
+    print(rf_classification)
+
+    print("\n=== Random Forest -- trading report (TEST set, final check only) ===")
+    rf_trading = trading_report(
+        rf_pred, rf_proba, result.test, horizon=HORIZON,
+        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
+    )
+    print(rf_trading)
+
+    print("\nPersisting Random Forest model...")
+    rf_metadata = ModelMetadata(
+        model_type="RandomForestModel",
+        hyperparameters=rf_model.get_hyperparameters(),
+        feature_columns=list(X_train.columns),
+        random_state=RANDOM_STATE,
+        train_pct=TRAIN_PCT,
+        val_pct=VAL_PCT,
+        horizon=HORIZON,
+        threshold=THRESHOLD,
+        symbol=SYMBOL,
+        timeframe=TIMEFRAME,
+        train_start=str(result.train.index.min()),
+        train_end=str(result.train.index.max()),
+        val_start=str(result.val.index.min()),
+        val_end=str(result.val.index.max()),
+        test_start=str(result.test.index.min()),
+        test_end=str(result.test.index.max()),
+        class_distribution=build_class_distribution(y_train),
+        evaluation_metrics={
+            "classification": rf_classification,
+            "trading": rf_trading,
+            "feature_importances": rf_model.get_feature_importances(),
+        },
+        **current_library_versions(),
+    )
+    save_model(RF_MODEL_DIRECTORY, rf_model, result.scaler, rf_metadata)
+    print(f"Model saved to {RF_MODEL_DIRECTORY}")
+
+    log_experiment(
+        EXPERIMENT_LOG_PATH, rf_metadata, RF_MODEL_DIRECTORY,
+        notes="Random Forest, chosen over Logistic Regression based on validation macro-F1 (0.407 vs 0.367)",
+    )
     print(f"Experiment logged to {EXPERIMENT_LOG_PATH}")
 
 

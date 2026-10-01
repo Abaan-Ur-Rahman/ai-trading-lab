@@ -1,0 +1,106 @@
+{
+  "model_type": "RandomForestModel",
+  "hyperparameters": {
+    "n_estimators": 200,
+    "max_depth": 5,
+    "min_samples_leaf": 20,
+    "class_weight": "balanced",
+    "random_state": 42
+  },
+  "feature_columns": [
+    "log_return",
+    "ema_gap_pct",
+    "rsi",
+    "atr_pct",
+    "macd_hist_pct"
+  ],
+  "random_state": 42,
+  "train_pct": 0.7,
+  "val_pct": 0.15,
+  "horizon": 5,
+  "threshold": 0.005,
+  "symbol": "XAU/USD",
+  "timeframe": "1h",
+  "train_start": "2026-03-08 17:00:00+00:00",
+  "train_end": "2026-07-31 10:00:00+00:00",
+  "val_start": "2026-07-31 16:00:00+00:00",
+  "val_end": "2026-08-31 10:00:00+00:00",
+  "test_start": "2026-08-31 16:00:00+00:00",
+  "test_end": "2026-10-01 11:00:00+00:00",
+  "class_distribution": {
+    "SELL": 563,
+    "HOLD": 2440,
+    "BUY": 470
+  },
+  "python_version": "3.13.0",
+  "pandas_version": "3.0.5",
+  "numpy_version": "2.5.2",
+  "sklearn_version": "1.9.1",
+  "evaluation_metrics": {
+    "classification": {
+      "per_class": {
+        "SELL": {
+          "precision": 0.2196969696969697,
+          "recall": 0.5370370370370371,
+          "f1": 0.3118279569892473,
+          "support": 108
+        },
+        "HOLD": {
+          "precision": 0.9457013574660633,
+          "recall": 0.3813868613138686,
+          "f1": 0.5435630689206762,
+          "support": 548
+        },
+        "BUY": {
+          "precision": 0.16470588235294117,
+          "recall": 0.5,
+          "f1": 0.24778761061946902,
+          "support": 84
+        }
+      },
+      "confusion_matrix": [
+        [
+          58,
+          7,
+          43
+        ],
+        [
+          169,
+          209,
+          170
+        ],
+        [
+          37,
+          5,
+          42
+        ]
+      ],
+      "confusion_matrix_labels": [
+        "SELL",
+        "HOLD",
+        "BUY"
+      ],
+      "macro_f1": 0.3677262121764642,
+      "accuracy": 0.4175675675675676,
+      "log_loss": 0.9474498435983627,
+      "brier_score": 0.5591794280608919
+    },
+    "trading": {
+      "evaluation_type": "signal-quality evaluation (independent per-row trades), not a portfolio backtest",
+      "cumulative_return": -0.0043906362418357926,
+      "sharpe_ratio": -0.03691067352627811,
+      "sharpe_ratio_note": "raw mean/std ratio over evaluated rows; not annualized (timeframe unknown at this layer)",
+      "max_drawdown": 0.004390636241835777,
+      "hit_rate": 0.0,
+      "n_rows_evaluated": 735,
+      "n_trades_taken": 1
+    },
+    "feature_importances": {
+      "log_return": 0.23936911661557203,
+      "ema_gap_pct": 0.12998035340877526,
+      "rsi": 0.08891219917743962,
+      "atr_pct": 0.4170529368747615,
+      "macd_hist_pct": 0.12468539392345161
+    }
+  }
+}

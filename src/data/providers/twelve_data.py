@@ -48,6 +48,7 @@ class TwelveDataProvider(MarketDataProvider):
         symbol: str,
         timeframe: str,
         limit: int = 100,
+        end_date: str | None = None,
     ) -> list[MarketCandle]:
         """Fetch OHLCV candles from Twelve Data.
 
@@ -59,6 +60,12 @@ class TwelveDataProvider(MarketDataProvider):
             Candle interval, such as ``1h`` or ``1day``.
         limit:
             Maximum number of candles to retrieve.
+        end_date:
+            Optional ``"YYYY-MM-DD HH:MM:SS"`` string. When provided,
+            fetches ``limit`` candles ending at this point in the past
+            instead of the most recent ``limit`` candles. Used for
+            paginating further back in history than a single request
+            can return.
 
         Returns
         -------
@@ -86,6 +93,9 @@ class TwelveDataProvider(MarketDataProvider):
             "outputsize": limit,
             "timezone": "UTC",
         }
+
+        if end_date is not None:
+            params["end_date"] = end_date
 
         headers = {
             "Authorization": f"apikey {self._api_key}",

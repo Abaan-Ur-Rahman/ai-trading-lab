@@ -247,3 +247,46 @@ def test_http_error_response_is_handled_correctly(
 
     with pytest.raises(httpx.HTTPStatusError):
         provider.get_candles("BTC/USD", "1h", limit=3)
+
+def test_request_includes_end_date_when_provided(
+    provider: TwelveDataProvider,
+    sample_response: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """end_date should be included in the request params when provided."""
+    seen: dict[str, Any] = {}
+
+    def fake_get(url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> Mock:
+        seen["params"] = params
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = sample_response
+        return response
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", fake_get)
+
+    provider.get_candles("BTC/USD", "1h", limit=3, end_date="2023-06-01 00:00:00")
+
+    assert seen["params"]["end_date"] == "2023-06-01 00:00:00"
+
+
+def test_request_omits_end_date_when_not_provided(
+    provider: TwelveDataProvider,
+    sample_response: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """end_date should not appear in request params when not given (unchanged default behavior)."""
+    seen: dict[str, Any] = {}
+
+    def fake_get(url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> Mock:
+        seen["params"] = params
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = sample_response
+        return response
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", fake_get)
+
+    provider.get_candles("BTC/USD", "1h", limit=3)
+
+    assert "end_date" not in seen["params"]
