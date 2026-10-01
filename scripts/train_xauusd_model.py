@@ -7,12 +7,21 @@ tests. This script just wires them together in the right order and is not
 itself unit tested, the same way a thin CLI entry point normally isn't --
 the logic worth testing lives one level down, where it's already covered.
 
+Model selection: every candidate model is trained and evaluated on
+VALIDATION only. Whichever has the higher validation macro-F1 is the
+winner, decided here in code -- not assumed or hardcoded -- and only the
+winner gets the one-time, final TEST-set check and gets persisted. The
+loser is never evaluated on test at all, since repeatedly looking at test
+across candidates is the same test-set leakage we're avoiding by not using
+test for selection in the first place.
+
 Run with: python scripts/train_xauusd_model.py
 """
 
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,32 +39,42 @@ from ml.baseline import MajorityClassBaseline, RuleBasedBaseline
 from ml.dataset import CLASS_LABELS, CLASS_NAMES, separate_features_and_target
 from ml.evaluation import classification_report, trading_report
 from ml.experiment_tracking import log_experiment
+from ml.models.base import ModelWrapper
 from ml.models.logistic_regression import LogisticRegressionModel
+from ml.models.random_forest import RandomForestModel
 from ml.persistence import ModelMetadata, current_library_versions, save_model
 from ml.training import train_model
-from ml.models.random_forest import RandomForestModel
 
 SYMBOL = "XAU/USD"
 SYMBOL_FOR_FILENAMES = "XAUUSD"
 TIMEFRAME = "1h"
 RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
 EXPERIMENT_LOG_PATH = PROJECT_ROOT / "experiments" / "experiments.jsonl"
+MODELS_DIR = PROJECT_ROOT / "models"
 
 TOTAL_CANDLES = 20_000  # ~2.3 years of 1h XAUUSD data, via paginated fetch
 HORIZON = 5
 THRESHOLD = 0.005
 TRAIN_PCT = 0.70
 VAL_PCT = 0.15
-CLASS_WEIGHT = "balanced"
 RANDOM_STATE = 42
 MIN_CONFIDENCE = 0.5
 TRANSACTION_COST_PCT = 0.0005
 
-_CLASS_WEIGHT_TAG = CLASS_WEIGHT if CLASS_WEIGHT is not None else "none"
-MODEL_DIRECTORY = PROJECT_ROOT / "models" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_logreg_{_CLASS_WEIGHT_TAG}_v1"
+LOGREG_CLASS_WEIGHT = "balanced"
 RF_CLASS_WEIGHT = "balanced"
-_RF_CLASS_WEIGHT_TAG = RF_CLASS_WEIGHT if RF_CLASS_WEIGHT is not None else "none"
-RF_MODEL_DIRECTORY = PROJECT_ROOT / "models" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_rf_{_RF_CLASS_WEIGHT_TAG}_v1"
+
+
+@dataclass
+class Candidate:
+    """One trained model competing for selection, plus its validation score."""
+
+    name: str
+    model: ModelWrapper
+    model_directory: Path
+    val_macro_f1: float
+    val_classification: dict
+    val_trading: dict
 
 
 def load_or_fetch_raw_ohlcv(repository: CSVRepository, provider) -> pd.DataFrame:
@@ -91,6 +110,48 @@ def build_class_distribution(y: pd.Series) -> dict[str, int]:
     return {name: int(counts.get(label, 0)) for label, name in zip(CLASS_LABELS, CLASS_NAMES)}
 
 
+def model_directory_for(name: str, class_weight: str | None) -> Path:
+    """Build this model's persistence directory, tagged by its class_weight config."""
+    tag = class_weight if class_weight is not None else "none"
+    return MODELS_DIR / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_{name}_{tag}_v1"
+
+
+def evaluate_candidate(
+    name: str,
+    model: ModelWrapper,
+    model_directory: Path,
+    X_val_scaled: pd.DataFrame,
+    y_val: pd.Series,
+    val_ohlcv: pd.DataFrame,
+) -> Candidate:
+    """Run this fitted model's VALIDATION-only evaluation and print it.
+
+    Never touches test -- that's reserved for whichever candidate wins.
+    """
+    val_pred = model.predict(X_val_scaled)
+    val_proba = model.predict_proba(X_val_scaled)
+
+    val_classification = classification_report(y_val, val_pred, val_proba)
+    val_trading = trading_report(
+        val_pred, val_proba, val_ohlcv, horizon=HORIZON,
+        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
+    )
+
+    print(f"\n=== {name} -- classification report (VALIDATION set) ===")
+    print(val_classification)
+    print(f"\n=== {name} -- trading report (VALIDATION set) ===")
+    print(val_trading)
+
+    return Candidate(
+        name=name,
+        model=model,
+        model_directory=model_directory,
+        val_macro_f1=val_classification["macro_f1"],
+        val_classification=val_classification,
+        val_trading=val_trading,
+    )
+
+
 def main(provider=None) -> None:
     provider = provider or TwelveDataProvider()
     repository = CSVRepository()
@@ -101,49 +162,67 @@ def main(provider=None) -> None:
     dataset = build_feature_dataset(raw_ohlcv, horizon=HORIZON, threshold=THRESHOLD)
     print(f"Feature dataset: {len(dataset)} rows after warm-up/horizon trimming.")
 
-    model = LogisticRegressionModel(class_weight=CLASS_WEIGHT, random_state=RANDOM_STATE)
-    result = train_model(model, dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT)
+    # Both candidates are trained against the identical split/scaler, produced
+    # once here, so the comparison between them is apples-to-apples.
+    logreg_result = train_model(
+        LogisticRegressionModel(class_weight=LOGREG_CLASS_WEIGHT, random_state=RANDOM_STATE),
+        dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT,
+    )
 
-    X_train, y_train = separate_features_and_target(result.train)
-    X_val, y_val = separate_features_and_target(result.val)
-    X_test, y_test = separate_features_and_target(result.test)
-    X_train_scaled = apply_scaler(result.scaler, X_train)
-    X_val_scaled = apply_scaler(result.scaler, X_val)
-    X_test_scaled = apply_scaler(result.scaler, X_test)
+    X_train, y_train = separate_features_and_target(logreg_result.train)
+    X_val, y_val = separate_features_and_target(logreg_result.val)
+    X_test, y_test = separate_features_and_target(logreg_result.test)
+    X_train_scaled = apply_scaler(logreg_result.scaler, X_train)
+    X_val_scaled = apply_scaler(logreg_result.scaler, X_val)
+    X_test_scaled = apply_scaler(logreg_result.scaler, X_test)
 
-    # VALIDATION set: use this to compare configurations (class_weight,
-    # threshold, horizon, etc.). This is the set you're allowed to look at
-    # repeatedly while iterating.
-    val_pred = result.model.predict(X_val_scaled)
-    val_proba = result.model.predict_proba(X_val_scaled)
+    rf_model = RandomForestModel(class_weight=RF_CLASS_WEIGHT, random_state=RANDOM_STATE)
+    rf_model.fit(X_train_scaled, y_train)
 
-    print("\n=== Logistic Regression -- classification report (VALIDATION set) ===")
-    print(classification_report(y_val, val_pred, val_proba))
+    # --- Candidate comparison: VALIDATION only. Neither candidate has
+    # touched test yet. ---
+    candidates = [
+        evaluate_candidate(
+            "LogisticRegression", logreg_result.model,
+            model_directory_for("logreg", LOGREG_CLASS_WEIGHT),
+            X_val_scaled, y_val, logreg_result.val,
+        ),
+        evaluate_candidate(
+            "RandomForest", rf_model,
+            model_directory_for("rf", RF_CLASS_WEIGHT),
+            X_val_scaled, y_val, logreg_result.val,
+        ),
+    ]
 
-    print("\n=== Logistic Regression -- trading report (VALIDATION set) ===")
-    print(trading_report(
-        val_pred, val_proba, result.val, horizon=HORIZON,
-        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
-    ))
+    print("\n=== Random Forest -- feature importances ===")
+    print(rf_model.get_feature_importances())
 
-    # TEST set: final, one-time check only. Do NOT use these numbers to
-    # pick between configurations -- that's what validation is for. Only
-    # look at this once you've already decided on your final setup.
-    y_pred = result.model.predict(X_test_scaled)
-    y_proba = result.model.predict_proba(X_test_scaled)
+    winner = max(candidates, key=lambda candidate: candidate.val_macro_f1)
+    comparison_summary = ", ".join(
+        f"{c.name}={c.val_macro_f1:.4f}" for c in candidates
+    )
+    print(f"\nModel selection (validation macro-F1): {comparison_summary}")
+    print(f"Winner: {winner.name}")
 
-    print("\n=== Logistic Regression -- classification report (TEST set, final check only) ===")
-    ml_classification = classification_report(y_test, y_pred, y_proba)
-    print(ml_classification)
+    # --- Winner only: ONE final, one-time test-set check. The loser is
+    # never evaluated on test. ---
+    y_pred = winner.model.predict(X_test_scaled)
+    y_proba = winner.model.predict_proba(X_test_scaled)
 
-    print("\n=== Logistic Regression -- trading report (TEST set, final check only) ===")
-    ml_trading = trading_report(
-        y_pred, y_proba, result.test, horizon=HORIZON,
+    print(f"\n=== {winner.name} -- classification report (TEST set, final check only) ===")
+    test_classification = classification_report(y_test, y_pred, y_proba)
+    print(test_classification)
+
+    print(f"\n=== {winner.name} -- trading report (TEST set, final check only) ===")
+    test_trading = trading_report(
+        y_pred, y_proba, logreg_result.test, horizon=HORIZON,
         min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
     )
-    print(ml_trading)
+    print(test_trading)
 
-    # Baselines, evaluated on the exact same untouched test period.
+    # Baselines are a fixed reference floor, not candidates being chosen
+    # between, so evaluating them on test carries none of the
+    # repeated-peeking risk that touching test for both ML candidates would.
     majority_baseline = MajorityClassBaseline()
     majority_baseline.fit(X_train, y_train)
     majority_pred = majority_baseline.predict(X_test)
@@ -152,15 +231,19 @@ def main(provider=None) -> None:
     print(classification_report(y_test, majority_pred, majority_proba))
 
     rule_based_baseline = RuleBasedBaseline()
-    rule_pred = rule_based_baseline.predict(result.test)
-    rule_proba = rule_based_baseline.predict_proba(result.test)
+    rule_pred = rule_based_baseline.predict(logreg_result.test)
+    rule_proba = rule_based_baseline.predict_proba(logreg_result.test)
     print("\n=== Rule-based baseline -- classification report (test set) ===")
     print(classification_report(y_test, rule_pred, rule_proba))
 
-    print("\nPersisting model...")
+    evaluation_metrics = {"classification": test_classification, "trading": test_trading}
+    if winner.name == "RandomForest":
+        evaluation_metrics["feature_importances"] = rf_model.get_feature_importances()
+
+    print(f"\nPersisting winning model ({winner.name})...")
     metadata = ModelMetadata(
-        model_type="LogisticRegressionModel",
-        hyperparameters=result.model.get_hyperparameters(),
+        model_type=f"{winner.name}Model",
+        hyperparameters=winner.model.get_hyperparameters(),
         feature_columns=list(X_train.columns),
         random_state=RANDOM_STATE,
         train_pct=TRAIN_PCT,
@@ -169,94 +252,22 @@ def main(provider=None) -> None:
         threshold=THRESHOLD,
         symbol=SYMBOL,
         timeframe=TIMEFRAME,
-        train_start=str(result.train.index.min()),
-        train_end=str(result.train.index.max()),
-        val_start=str(result.val.index.min()),
-        val_end=str(result.val.index.max()),
-        test_start=str(result.test.index.min()),
-        test_end=str(result.test.index.max()),
+        train_start=str(logreg_result.train.index.min()),
+        train_end=str(logreg_result.train.index.max()),
+        val_start=str(logreg_result.val.index.min()),
+        val_end=str(logreg_result.val.index.max()),
+        test_start=str(logreg_result.test.index.min()),
+        test_end=str(logreg_result.test.index.max()),
         class_distribution=build_class_distribution(y_train),
-        evaluation_metrics={"classification": ml_classification, "trading": ml_trading},
+        evaluation_metrics=evaluation_metrics,
         **current_library_versions(),
     )
-    save_model(MODEL_DIRECTORY, result.model, result.scaler, metadata)
-    print(f"Model saved to {MODEL_DIRECTORY}")
-
-    log_experiment(EXPERIMENT_LOG_PATH, metadata, MODEL_DIRECTORY, notes="First MVP end-to-end run")
-    print(f"Experiment logged to {EXPERIMENT_LOG_PATH}")
-
-    # --- Candidate comparison: Random Forest, validation set only ---
-    # Not evaluated on test yet -- we're still choosing between this and
-    # Logistic Regression. Whichever wins on validation gets ONE final
-    # test-set run; this one doesn't touch test until that decision is made.
-    rf_model = RandomForestModel(class_weight=RF_CLASS_WEIGHT, random_state=RANDOM_STATE)
-    rf_model.fit(X_train_scaled, y_train)
-
-    rf_val_pred = rf_model.predict(X_val_scaled)
-    rf_val_proba = rf_model.predict_proba(X_val_scaled)
-
-    print("\n=== Random Forest -- classification report (VALIDATION set) ===")
-    print(classification_report(y_val, rf_val_pred, rf_val_proba))
-
-    print("\n=== Random Forest -- trading report (VALIDATION set) ===")
-    print(trading_report(
-        rf_val_pred, rf_val_proba, result.val, horizon=HORIZON,
-        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
-    ))
-
-    print("\n=== Random Forest -- feature importances ===")
-    print(rf_model.get_feature_importances())
-
-    # Decision made on validation evidence: Random Forest outperforms
-    # Logistic Regression (macro-F1 0.407 vs 0.367, more balanced per-class
-    # recall). This is now the FINAL, one-time test-set check for the
-    # chosen model -- not a comparison.
-    rf_pred = rf_model.predict(X_test_scaled)
-    rf_proba = rf_model.predict_proba(X_test_scaled)
-
-    print("\n=== Random Forest -- classification report (TEST set, final check only) ===")
-    rf_classification = classification_report(y_test, rf_pred, rf_proba)
-    print(rf_classification)
-
-    print("\n=== Random Forest -- trading report (TEST set, final check only) ===")
-    rf_trading = trading_report(
-        rf_pred, rf_proba, result.test, horizon=HORIZON,
-        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
-    )
-    print(rf_trading)
-
-    print("\nPersisting Random Forest model...")
-    rf_metadata = ModelMetadata(
-        model_type="RandomForestModel",
-        hyperparameters=rf_model.get_hyperparameters(),
-        feature_columns=list(X_train.columns),
-        random_state=RANDOM_STATE,
-        train_pct=TRAIN_PCT,
-        val_pct=VAL_PCT,
-        horizon=HORIZON,
-        threshold=THRESHOLD,
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
-        train_start=str(result.train.index.min()),
-        train_end=str(result.train.index.max()),
-        val_start=str(result.val.index.min()),
-        val_end=str(result.val.index.max()),
-        test_start=str(result.test.index.min()),
-        test_end=str(result.test.index.max()),
-        class_distribution=build_class_distribution(y_train),
-        evaluation_metrics={
-            "classification": rf_classification,
-            "trading": rf_trading,
-            "feature_importances": rf_model.get_feature_importances(),
-        },
-        **current_library_versions(),
-    )
-    save_model(RF_MODEL_DIRECTORY, rf_model, result.scaler, rf_metadata)
-    print(f"Model saved to {RF_MODEL_DIRECTORY}")
+    save_model(winner.model_directory, winner.model, logreg_result.scaler, metadata)
+    print(f"Model saved to {winner.model_directory}")
 
     log_experiment(
-        EXPERIMENT_LOG_PATH, rf_metadata, RF_MODEL_DIRECTORY,
-        notes="Random Forest, chosen over Logistic Regression based on validation macro-F1 (0.407 vs 0.367)",
+        EXPERIMENT_LOG_PATH, metadata, winner.model_directory,
+        notes=f"Selected by validation macro-F1 over {len(candidates)} candidates: {comparison_summary}",
     )
     print(f"Experiment logged to {EXPERIMENT_LOG_PATH}")
 
