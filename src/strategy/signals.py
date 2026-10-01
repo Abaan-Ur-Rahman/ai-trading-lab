@@ -79,7 +79,7 @@ class SignalGenerator:
             raise ValueError("slow EMA must be positive to compute confidence")
 
         gap_pct = abs(curr_fast - curr_slow) / curr_slow
-        confidence = min(gap_pct / max_gap_pct, 1.0)
+        confidence = self._scale_confidence(gap_pct, max_gap_pct)
 
         if prev_fast <= prev_slow and curr_fast > curr_slow:
             return SignalResult(direction=Signal.BUY, confidence=confidence)
@@ -117,11 +117,11 @@ class SignalGenerator:
             raise ValueError("Not enough data to compute a valid RSI value")
 
         if latest_rsi <= oversold:
-            confidence = min((oversold - latest_rsi) / oversold, 1.0)
+            confidence = self._scale_confidence(oversold - latest_rsi, oversold)
             return SignalResult(direction=Signal.BUY, confidence=confidence)
 
         if latest_rsi >= overbought:
-            confidence = min((latest_rsi - overbought) / (100 - overbought), 1.0)
+            confidence = self._scale_confidence(latest_rsi - overbought, 100 - overbought)
             return SignalResult(direction=Signal.SELL, confidence=confidence)
 
         return SignalResult(direction=Signal.HOLD, confidence=0.0)
@@ -159,7 +159,7 @@ class SignalGenerator:
             raise ValueError("latest close must be positive to compute confidence")
 
         histogram_pct = abs(curr_macd - curr_signal) / latest_close
-        confidence = min(histogram_pct / max_histogram_pct, 1.0)
+        confidence = self._scale_confidence(histogram_pct, max_histogram_pct)
 
         if prev_macd <= prev_signal and curr_macd > curr_signal:
             return SignalResult(direction=Signal.BUY, confidence=confidence)
