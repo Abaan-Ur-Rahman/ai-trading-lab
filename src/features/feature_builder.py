@@ -19,6 +19,37 @@ def multi_period_log_return(close: pd.Series, periods: int) -> pd.Series:
 
     return np.log(close / close.shift(periods))
 
+def range_position(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    lookback: int = 20,
+) -> pd.Series:
+    """Calculate where the current close sits within the recent high/low range.
+
+    Normalized to [0, 1]: 0 means close is at the lookback-period low, 1
+    means close is at the lookback-period high. Uses a trailing, inclusive
+    rolling window of the current and past `lookback` bars, so no future
+    information enters the calculation.
+
+    When the recent high equals the recent low (a perfectly flat range --
+    e.g. constant price, or a symbol with zero intraday movement), the
+    position is defined as 0.5 (neutral) rather than dividing by zero.
+
+    The first `lookback - 1` rows, which don't have a full window, are NaN.
+    """
+    if lookback <= 0:
+        raise ValueError("lookback must be a positive integer")
+
+    rolling_high = high.rolling(window=lookback).max()
+    rolling_low = low.rolling(window=lookback).min()
+    range_width = rolling_high - rolling_low
+
+    position = (close - rolling_low) / range_width
+    position = position.where(range_width != 0, 0.5)
+
+    return position
+
 def build_features(
     dataframe: pd.DataFrame,
     indicators: TechnicalIndicators | None = None,
@@ -29,6 +60,7 @@ def build_features(
     macd_fast: int = 12,
     macd_slow: int = 26,
     macd_signal: int = 9,
+    range_lookback: int = 20,
 ) -> pd.DataFrame:
     """Build ML feature columns from OHLCV data.
 
@@ -67,6 +99,10 @@ def build_features(
     macd_df = indicators.macd(dataframe, fast=macd_fast, slow=macd_slow, signal=macd_signal)
     macd_hist_pct = macd_df[f"MACDh_{macd_fast}_{macd_slow}_{macd_signal}"] / close
 
+    range_pos = range_position(
+        dataframe["high"], dataframe["low"], close, lookback=range_lookback,
+    )
+
     return pd.DataFrame(
         {
             "log_return": log_return,
@@ -77,6 +113,7 @@ def build_features(
             "rsi": rsi,
             "atr_pct": atr_pct,
             "macd_hist_pct": macd_hist_pct,
+            "range_position": range_pos,
         },
         index=dataframe.index,
     )
