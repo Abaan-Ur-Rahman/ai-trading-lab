@@ -49,3 +49,14 @@ logs/
 *.pt
 *.pth
 *.onnx
+
+# ==========================
+# Regenerable data & model artifacts
+# ==========================
+# Raw market data cache -- fetched via scripts/train_xauusd_model.py.
+data/raw/*.csv
+
+# Trained model binaries -- regenerate via scripts/train_xauusd_model.py.
+# metadata.json and scaler.json stay tracked: small, human-readable, and
+# the actual reviewable record of what each persisted model is.
+models/*/model.joblib
