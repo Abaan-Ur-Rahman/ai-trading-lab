@@ -23,12 +23,19 @@ class CSVRepository:
         self,
         path: Path,
     ) -> pd.DataFrame:
-        """Load a DataFrame from a CSV file."""
-        ...
+        """Load a DataFrame from a CSV file.
+
+        Raises:
+            FileNotFoundError: If no file exists at `path`.
+        """
+        if not path.exists():
+            raise FileNotFoundError(f"CSV file not found: {path}")
+
+        return pd.read_csv(path)
 
     def exists(
         self,
         path: Path,
     ) -> bool:
         """Return True if the CSV file exists."""
-        ...
+        return path.exists()
