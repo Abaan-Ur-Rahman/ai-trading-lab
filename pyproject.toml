@@ -10,6 +10,7 @@ dependencies = [
     "pandas-ta-classic>=0.6.52",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
+    "scikit-learn>=1.9.1",
 ]
 
 [project.optional-dependencies]
