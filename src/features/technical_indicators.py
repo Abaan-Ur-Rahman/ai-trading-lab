@@ -31,10 +31,15 @@ class TechnicalIndicators:
 
         self._validate_columns(dataframe, {"close"})
 
-        return ta.ema(
+        result = ta.ema(
             dataframe["close"],
             length=length,
         )
+
+        if result is None:
+            raise ValueError("Failed to calculate EMA")
+
+        return result
 
     def relative_strength_index(
         self,
@@ -64,12 +69,17 @@ class TechnicalIndicators:
 
         self._validate_columns(dataframe, {"high", "low", "close"})
 
-        return ta.atr(
+        result = ta.atr(
             high=dataframe["high"],
             low=dataframe["low"],
             close=dataframe["close"],
             length=length,
         )
+
+        if result is None:
+            raise ValueError("Failed to calculate ATR")
+
+        return result
 
     def macd(
         self,
