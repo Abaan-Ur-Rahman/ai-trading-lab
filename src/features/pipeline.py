@@ -27,8 +27,11 @@ def build_feature_dataset(
 
     Combines the original OHLC columns, build_features' engineered
     columns, and create_labels' label column into a single dataset, then
-    drops any row containing a NaN in any column (indicator warm-up at
-    the start, label horizon at the end). Raises ValueError if fewer than
+    drops any row with a NaN in an engineered feature or the label
+    (indicator warm-up at the start, label horizon at the end) -- NOT a
+    NaN in a passthrough OHLC column, since some providers legitimately
+    report no volume for certain symbols (XAU/USD, say), and that should
+    not disqualify an otherwise-usable row. Raises ValueError if fewer than
     `min_rows` remain.
 
     The original OHLC columns are kept, not just the engineered features,
@@ -62,7 +65,9 @@ def build_feature_dataset(
     dataset = dataframe.copy()
     dataset[features.columns] = features
     dataset["label"] = labels
-    dataset = dataset.dropna()
+
+    required_columns = list(features.columns) + ["label"]
+    dataset = dataset.dropna(subset=required_columns)
 
     if len(dataset) < min_rows:
         raise ValueError(

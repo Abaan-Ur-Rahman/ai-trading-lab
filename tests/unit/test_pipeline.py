@@ -111,3 +111,19 @@ def test_build_feature_dataset_preserves_original_ohlc_columns() -> None:
     assert "high" in dataset.columns
     assert "low" in dataset.columns
     pd.testing.assert_series_equal(dataset["close"], dataframe.loc[dataset.index, "close"])
+
+def test_build_feature_dataset_keeps_rows_with_nan_in_passthrough_columns() -> None:
+    """A NaN in a passthrough column (e.g. missing volume) must not drop the row.
+
+    Some providers (TwelveData, for forex/commodity symbols) report no
+    volume at all -- an entirely-NaN volume column should not wipe out
+    every row, since volume isn't one of the engineered features or the
+    label.
+    """
+    dataframe = _make_ohlc_dataframe()
+    dataframe["volume"] = np.nan
+
+    dataset = build_feature_dataset(dataframe, min_rows=1, **_SMALL_PERIODS)
+
+    assert len(dataset) > 0
+    assert dataset["volume"].isna().all()
