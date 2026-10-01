@@ -38,7 +38,6 @@ SYMBOL = "XAU/USD"
 SYMBOL_FOR_FILENAMES = "XAUUSD"
 TIMEFRAME = "1h"
 RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
-MODEL_DIRECTORY = PROJECT_ROOT / "models" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_logreg_v1"
 EXPERIMENT_LOG_PATH = PROJECT_ROOT / "experiments" / "experiments.jsonl"
 
 FETCH_LIMIT = 5000
@@ -46,10 +45,13 @@ HORIZON = 5
 THRESHOLD = 0.005
 TRAIN_PCT = 0.70
 VAL_PCT = 0.15
-CLASS_WEIGHT = None
+CLASS_WEIGHT = "balanced"
 RANDOM_STATE = 42
 MIN_CONFIDENCE = 0.5
 TRANSACTION_COST_PCT = 0.0005
+
+_CLASS_WEIGHT_TAG = CLASS_WEIGHT if CLASS_WEIGHT is not None else "none"
+MODEL_DIRECTORY = PROJECT_ROOT / "models" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}_logreg_{_CLASS_WEIGHT_TAG}_v1"
 
 
 def load_or_fetch_raw_ohlcv(repository: CSVRepository, provider) -> pd.DataFrame:
@@ -98,17 +100,37 @@ def main(provider=None) -> None:
     result = train_model(model, dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT)
 
     X_train, y_train = separate_features_and_target(result.train)
+    X_val, y_val = separate_features_and_target(result.val)
     X_test, y_test = separate_features_and_target(result.test)
+    X_val_scaled = apply_scaler(result.scaler, X_val)
     X_test_scaled = apply_scaler(result.scaler, X_test)
 
+    # VALIDATION set: use this to compare configurations (class_weight,
+    # threshold, horizon, etc.). This is the set you're allowed to look at
+    # repeatedly while iterating.
+    val_pred = result.model.predict(X_val_scaled)
+    val_proba = result.model.predict_proba(X_val_scaled)
+
+    print("\n=== Logistic Regression -- classification report (VALIDATION set) ===")
+    print(classification_report(y_val, val_pred, val_proba))
+
+    print("\n=== Logistic Regression -- trading report (VALIDATION set) ===")
+    print(trading_report(
+        val_pred, val_proba, result.val, horizon=HORIZON,
+        min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
+    ))
+
+    # TEST set: final, one-time check only. Do NOT use these numbers to
+    # pick between configurations -- that's what validation is for. Only
+    # look at this once you've already decided on your final setup.
     y_pred = result.model.predict(X_test_scaled)
     y_proba = result.model.predict_proba(X_test_scaled)
 
-    print("\n=== Logistic Regression -- classification report (test set) ===")
+    print("\n=== Logistic Regression -- classification report (TEST set, final check only) ===")
     ml_classification = classification_report(y_test, y_pred, y_proba)
     print(ml_classification)
 
-    print("\n=== Logistic Regression -- trading report (test set) ===")
+    print("\n=== Logistic Regression -- trading report (TEST set, final check only) ===")
     ml_trading = trading_report(
         y_pred, y_proba, result.test, horizon=HORIZON,
         min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
