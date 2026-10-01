@@ -32,12 +32,4 @@ SUPPORTED_ASSETS = (
 # Supported Timeframes
 # ---------------------------------------------------------------------
 
-SUPPORTED_TIMEFRAMES = (
-    "1m",
-    "5m",
-    "15m",
-    "30m",
-    "1h",
-    "4h",
-    "1d",
-)
+SUPPORTED_TIMEFRAMES = ("1min", "5min", "15min", "30min", "1h", "4h", "1day")
