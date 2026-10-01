@@ -16,6 +16,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+    { name = "joblib" },
     { name = "pandas" },
     { name = "pandas-stubs" },
     { name = "pandas-ta-classic" },
@@ -32,6 +33,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "joblib", specifier = ">=1.6.0" },
     { name = "pandas", specifier = ">=3.0.5" },
     { name = "pandas-stubs", specifier = "~=3.0.5" },
     { name = "pandas-ta-classic", specifier = ">=0.6.52" },
