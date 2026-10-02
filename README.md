@@ -52,6 +52,12 @@ The architecture is intentionally designed so new asset classes can be added wit
 
 ---
 
+## Known Issues
+
+- **Experiment log entries recorded before the model-selection fix** have a `notes` field that incorrectly states Random Forest was chosen based on a validation comparison. Earlier versions of `scripts/train_xauusd_model.py` hardcoded Random Forest as the winner regardless of its actual validation score; a run against ~20,000 candles of XAUUSD data later showed Random Forest losing to Logistic Regression on validation macro-F1 (0.296 vs 0.336), a result the log never reflected at the time. `experiments/experiments.jsonl` is append-only by design, so those entries were left unedited rather than rewritten — this note is the correction, not the fix. The underlying bug is fixed: model selection is now a real, validation-based comparison between candidates, logged accurately (see the `Candidate`/`evaluate_candidate` logic in `scripts/train_xauusd_model.py`).
+
+---
+
 ## Planned Capabilities
 
 - Automated market data collection
