@@ -19,6 +19,7 @@ def build_feature_dataset(
     macd_fast: int = 12,
     macd_slow: int = 26,
     macd_signal: int = 9,
+    range_lookback: int = 20,
     horizon: int = 5,
     threshold: float = 0.005,
     min_rows: int = 100,
@@ -58,6 +59,7 @@ def build_feature_dataset(
         macd_fast=macd_fast,
         macd_slow=macd_slow,
         macd_signal=macd_signal,
+        range_lookback=range_lookback,
     )
 
     labels = create_labels(dataframe, horizon=horizon, threshold=threshold)

@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from features.feature_builder import range_position
 from features.pipeline import build_feature_dataset
 
 
@@ -127,3 +128,35 @@ def test_build_feature_dataset_keeps_rows_with_nan_in_passthrough_columns() -> N
 
     assert len(dataset) > 0
     assert dataset["volume"].isna().all()
+
+
+
+def test_build_feature_dataset_forwards_range_lookback() -> None:
+    """range_lookback must actually reach build_features, not be silently
+    dropped on the way through this layer.
+
+    Regression test for a real gap: build_feature_dataset used to accept
+    every other build_features parameter (ema_fast, rsi_length, ...) but
+    had no range_lookback parameter at all, so it always used
+    build_features' own default of 20 no matter what a caller wanted.
+    Asserting against an independently-computed range_position at a
+    non-default lookback is the only way this bug would actually show up
+    in a test -- a test that never varies range_lookback would pass
+    whether or not the parameter was wired through.
+    """
+    dataframe = _make_ohlc_dataframe()
+    custom_lookback = 5
+
+    dataset = build_feature_dataset(
+        dataframe, min_rows=1, range_lookback=custom_lookback, **_SMALL_PERIODS,
+    )
+
+    expected = range_position(
+        dataframe["high"], dataframe["low"], dataframe["close"], lookback=custom_lookback,
+    )
+
+    pd.testing.assert_series_equal(
+        dataset["range_position"],
+        expected.loc[dataset.index],
+        check_names=False,
+    )
