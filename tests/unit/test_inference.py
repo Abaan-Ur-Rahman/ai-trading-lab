@@ -6,6 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from unittest.mock import patch
+
+from features.pipeline import build_features as real_build_features
 from features.scaling import apply_scaler, fit_scaler
 from ml.dataset import CLASS_NAMES, FEATURE_COLUMNS
 from ml.inference import predict_from_ohlcv
@@ -91,3 +94,27 @@ def test_predict_from_ohlcv_does_not_mutate_input(
     predict_from_ohlcv(ohlcv_with_enough_history, model, scaler)
 
     pd.testing.assert_frame_equal(ohlcv_with_enough_history, original)
+
+
+
+def test_predict_from_ohlcv_forwards_range_lookback(
+    ohlcv_with_enough_history, fitted_model_and_scaler
+) -> None:
+    """range_lookback must reach build_features, not be silently dropped.
+
+    predict_from_ohlcv only keeps FEATURE_COLUMNS out of build_features'
+    output, and range_position isn't in FEATURE_COLUMNS yet (that lands
+    with the pending feature-set comparison work) -- so the predicted
+    probabilities themselves won't visibly change with range_lookback
+    today. Asserting on the output would therefore pass whether or not
+    this parameter is actually wired through, which is exactly the bug
+    we're guarding against. Patching build_features (wrapped so it still
+    computes a real result) and asserting on its call arguments is the
+    only way to directly test this specific wiring.
+    """
+    model, scaler = fitted_model_and_scaler
+
+    with patch("ml.inference.build_features", side_effect=real_build_features) as mock_build_features:
+        predict_from_ohlcv(ohlcv_with_enough_history, model, scaler, range_lookback=7)
+
+    assert mock_build_features.call_args.kwargs["range_lookback"] == 7

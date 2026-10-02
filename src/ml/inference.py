@@ -31,6 +31,7 @@ def predict_from_ohlcv(
     macd_fast: int = 12,
     macd_slow: int = 26,
     macd_signal: int = 9,
+    range_lookback: int = 20,
 ) -> pd.Series:
     """Predict SELL/HOLD/BUY probabilities for the most recent row of `ohlcv`.
 
@@ -49,9 +50,9 @@ def predict_from_ohlcv(
         indicators: Optional TechnicalIndicators instance (for test
             injection); a default instance is used if not provided.
         ema_fast, ema_slow, rsi_length, atr_length, macd_fast, macd_slow,
-            macd_signal: Must match the values used when the model's
-            training dataset was built, or the computed features will not
-            mean what the model was trained on.
+            macd_signal, range_lookback: Must match the values used when
+            the model's training dataset was built, or the computed
+            features will not mean what the model was trained on.
 
     Returns:
         A pd.Series indexed by CLASS_NAMES ("SELL", "HOLD", "BUY") giving
@@ -75,6 +76,7 @@ def predict_from_ohlcv(
         macd_fast=macd_fast,
         macd_slow=macd_slow,
         macd_signal=macd_signal,
+        range_lookback=range_lookback,
     )
 
     latest_row = features.iloc[[-1]][FEATURE_COLUMNS]
