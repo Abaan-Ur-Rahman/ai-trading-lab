@@ -90,6 +90,7 @@ def chronological_split(
 
 def separate_features_and_target(
     dataset: pd.DataFrame,
+    feature_columns: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Split a feature+label dataset into X (features) and y (integer target).
 
@@ -100,10 +101,27 @@ def separate_features_and_target(
 
     Does not mutate the input dataframe.
 
+    Args:
+        dataset: Feature+label data, e.g. the output of
+            build_feature_dataset (or a chronological_split partition of
+            it).
+        feature_columns: Which columns to select as X. Defaults to
+            FEATURE_COLUMNS (the module's standard 5-feature set) when
+            not provided, so every existing caller is unaffected. Pass
+            an explicit list to select a different feature subset --
+            e.g. for comparing feature-set configurations against each
+            other.
+
     Raises:
-        ValueError: If any of FEATURE_COLUMNS or 'label' is missing.
+        ValueError: If feature_columns is an empty list, or if any
+            requested feature column or 'label' is missing from dataset.
     """
-    missing_features = set(FEATURE_COLUMNS).difference(dataset.columns)
+    columns = FEATURE_COLUMNS if feature_columns is None else feature_columns
+
+    if not columns:
+        raise ValueError("feature_columns must not be empty")
+
+    missing_features = set(columns).difference(dataset.columns)
     if missing_features:
         raise ValueError(
             f"dataset is missing required feature columns: {sorted(missing_features)}",
@@ -112,7 +130,7 @@ def separate_features_and_target(
     if "label" not in dataset.columns:
         raise ValueError("dataset must contain a 'label' column")
 
-    features = dataset[FEATURE_COLUMNS].copy()
+    features = dataset[columns].copy()
     target = dataset["label"].astype(int)
     target.name = "label"
 

@@ -155,6 +155,38 @@ def test_separate_features_and_target_does_not_mutate_input() -> None:
     pd.testing.assert_frame_equal(dataset, original)
 
 
+def test_separate_features_and_target_uses_custom_feature_columns() -> None:
+    """A custom feature_columns list should be used instead of FEATURE_COLUMNS.
+
+    This is what makes comparing different feature-set configurations
+    possible -- selecting a 2-column subset here is enough to prove the
+    parameter is actually respected, independent of what the columns
+    contain.
+    """
+    dataset = _make_feature_dataset(rows=10)
+    custom_columns = ["log_return", "rsi"]
+
+    X, y = separate_features_and_target(dataset, feature_columns=custom_columns)
+
+    assert list(X.columns) == custom_columns
+
+
+def test_separate_features_and_target_rejects_empty_feature_columns() -> None:
+    """An empty feature_columns list should raise, not silently return zero columns."""
+    dataset = _make_feature_dataset(rows=10)
+
+    with pytest.raises(ValueError):
+        separate_features_and_target(dataset, feature_columns=[])
+
+
+def test_separate_features_and_target_requires_requested_feature_columns() -> None:
+    """A custom feature_columns entry missing from the dataset should raise ValueError."""
+    dataset = _make_feature_dataset(rows=10)
+
+    with pytest.raises(ValueError):
+        separate_features_and_target(dataset, feature_columns=["nonexistent_column"])
+
+
 def test_validate_all_classes_present_passes_when_all_classes_exist() -> None:
     """No exception should be raised when y_train contains every class in CLASS_LABELS."""
     y_train = pd.Series(CLASS_LABELS * 5)
