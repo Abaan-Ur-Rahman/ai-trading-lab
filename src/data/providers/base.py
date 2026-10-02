@@ -26,6 +26,7 @@ class MarketDataProvider(ABC):
         symbol: str,
         timeframe: str,
         limit: int = 100,
+        end_date: str | None = None,
     ) -> list[MarketCandle]:
         """Fetch market candles for a given symbol and timeframe.
 
@@ -37,6 +38,14 @@ class MarketDataProvider(ABC):
             Candle timeframe (e.g., "1m", "5m", "1h", "1d").
         limit : int, optional
             Maximum number of candles to fetch (default: 100).
+        end_date : str, optional
+            Optional ``"YYYY-MM-DD HH:MM:SS"`` string. When provided,
+            fetch `limit` candles ending at this point in the past
+            instead of the most recent `limit` candles. Used for
+            paginating further back in history than a single request
+            can return. Implementations that cannot support fetching
+            from an arbitrary historical point should raise
+            NotImplementedError.
 
         Returns
         -------
