@@ -26,12 +26,15 @@ class LogisticRegressionModel(ModelWrapper):
 
     def __init__(
         self,
+        C: float = 1.0,
         class_weight: str | None = None,
         random_state: int = 42,
     ) -> None:
+        self._C = C
         self._class_weight = class_weight
         self._random_state = random_state
         self._model = LogisticRegression(
+            C=C,
             class_weight=class_weight,
             random_state=random_state,
             max_iter=1000,
@@ -71,6 +74,7 @@ class LogisticRegressionModel(ModelWrapper):
     def get_hyperparameters(self) -> dict:
         """Return this model's hyperparameters as a plain dict."""
         return {
+            "C": self._C,
             "class_weight": self._class_weight,
             "random_state": self._random_state,
         }

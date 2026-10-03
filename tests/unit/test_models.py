@@ -131,8 +131,28 @@ def test_predict_proba_reindexes_regardless_of_classes_order(
     assert result.iloc[0]["HOLD"] == pytest.approx(0.3)
     assert result.iloc[0]["BUY"] == pytest.approx(0.2)
 
-def test_get_hyperparameters_returns_class_weight_and_random_state() -> None:
-    """get_hyperparameters() should expose class_weight and random_state."""
-    model = LogisticRegressionModel(class_weight="balanced", random_state=7)
+def test_C_defaults_to_one() -> None:
+    """C should default to 1.0, matching sklearn's own LogisticRegression default."""
+    model = LogisticRegressionModel()
 
-    assert model.get_hyperparameters() == {"class_weight": "balanced", "random_state": 7}
+    assert model._C == 1.0
+
+
+def test_C_is_configurable(small_training_data) -> None:
+    """A custom C must actually reach the underlying sklearn model."""
+    X_train, y_train = small_training_data
+    model = LogisticRegressionModel(C=0.1)
+    model.fit(X_train, y_train)
+
+    assert model._model.C == 0.1
+
+
+def test_get_hyperparameters_returns_class_weight_and_random_state() -> None:
+    """get_hyperparameters() should expose C, class_weight, and random_state."""
+    model = LogisticRegressionModel(C=0.5, class_weight="balanced", random_state=7)
+
+    assert model.get_hyperparameters() == {
+        "C": 0.5,
+        "class_weight": "balanced",
+        "random_state": 7,
+    }
