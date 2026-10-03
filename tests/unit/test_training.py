@@ -121,3 +121,34 @@ def test_train_model_propagates_invalid_split_config(synthetic_dataset: pd.DataF
 
     with pytest.raises(ValueError):
         train_model(model, synthetic_dataset, horizon=2, train_pct=0.9, val_pct=0.3)
+
+
+def test_train_model_uses_custom_feature_columns(synthetic_dataset: pd.DataFrame) -> None:
+    """A custom feature_columns list should be used instead of the default FEATURE_COLUMNS.
+
+    This is what lets the training script fit each candidate on a
+    different feature-set configuration while still going through the
+    one blessed train_model path, instead of duplicating split/scale/fit
+    logic in the script itself.
+    """
+    custom_columns = FEATURE_COLUMNS[:2]
+    model = LogisticRegressionModel()
+
+    result = train_model(model, synthetic_dataset, horizon=2, feature_columns=custom_columns)
+
+    assert list(result.scaler.mean.index) == custom_columns
+    predictions = result.model.predict(result.train[custom_columns])
+    assert set(np.unique(predictions)).issubset({-1, 0, 1})
+
+
+def test_train_model_scaler_fit_only_on_custom_feature_columns(
+    synthetic_dataset: pd.DataFrame,
+) -> None:
+    """The scaler's mean must reflect only the custom columns, not all of FEATURE_COLUMNS."""
+    custom_columns = FEATURE_COLUMNS[:2]
+    model = LogisticRegressionModel()
+
+    result = train_model(model, synthetic_dataset, horizon=2, feature_columns=custom_columns)
+
+    expected_mean = result.train[custom_columns].mean()
+    pd.testing.assert_series_equal(result.scaler.mean, expected_mean, check_names=False)
