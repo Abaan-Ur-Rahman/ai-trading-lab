@@ -38,10 +38,7 @@ The architecture is intentionally designed so new asset classes can be added wit
 - **Feature engineering pipeline** — technical indicators (EMA, RSI, ATR, MACD), engineered features (log returns at multiple horizons, EMA gap, RSI, ATR%, MACD histogram%, a recent-range position indicator), and a leakage-safe dataset builder (chronological warm-up/horizon trimming, no future information in any feature).
 - **ML layer** — a model-agnostic wrapper interface with Logistic Regression and Random Forest implementations, chronological train/validation/test splitting with purge gaps against label-horizon leakage, feature scaling fit only on training data, classification and trading-signal evaluation metrics, majority-class and rule-based baselines, model/scaler/metadata persistence, single-point live inference, and a local JSONL experiment log.
 - **Validated methodology** — trained and evaluated end-to-end against ~20,000 hours of real XAUUSD 1h data, with model selection done strictly on a validation set and the test set touched exactly once per chosen configuration, to avoid the subtle test-set leakage that comes from picking a "winner" based on repeated test-set peeking.
-
-**In progress:**
-
-- Evaluating whether additional engineered features (multi-horizon momentum, recent-range position) actually improve on the original feature set, rather than assuming more features help.
+- **Feature-set comparison** — ran a controlled comparison of 4 feature-set configurations (the original 5 indicators; +multi-horizon momentum; +recent-range position; all 9 combined) across both models, 8 candidates total, selected strictly on validation macro-F1. Momentum features gave Random Forest a real improvement (macro-F1 0.296 → 0.352); recent-range position showed little benefit and slightly hurt Random Forest when combined with momentum. The winning configuration's one-time test-set score (0.325) came in a bit below the previous, simpler configuration's test score (0.340) — a useful reminder that a validation-set winner doesn't automatically generalize best, which is exactly why the test set stays untouched until the final check rather than being used to pick favorites.
 
 **Not started yet:**
 
