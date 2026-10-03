@@ -57,6 +57,24 @@ def test_train_model_scaler_fit_only_on_train(synthetic_dataset: pd.DataFrame) -
     pd.testing.assert_series_equal(result.scaler.mean, expected_mean, check_names=False)
 
 
+def test_train_model_uses_custom_feature_columns(synthetic_dataset: pd.DataFrame) -> None:
+    """A custom feature_columns list should drive scaling and fitting, not FEATURE_COLUMNS.
+
+    This is what makes training each feature-set candidate in the
+    comparison script possible -- a 2-column subset is enough to prove
+    the parameter is actually forwarded to separate_features_and_target.
+    """
+    model = LogisticRegressionModel()
+    custom_columns = FEATURE_COLUMNS[:2]
+
+    result = train_model(model, synthetic_dataset, horizon=2, feature_columns=custom_columns)
+
+    assert list(result.scaler.mean.index) == custom_columns
+
+    predictions = result.model.predict(result.train[custom_columns])
+    assert set(np.unique(predictions)).issubset({-1, 0, 1})
+
+
 def test_train_model_partitions_are_unscaled_and_keep_all_columns(
     synthetic_dataset: pd.DataFrame,
 ) -> None:

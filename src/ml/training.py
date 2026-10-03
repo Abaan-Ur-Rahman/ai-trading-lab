@@ -48,6 +48,7 @@ def train_model(
     horizon: int,
     train_pct: float = 0.70,
     val_pct: float = 0.15,
+    feature_columns: list[str] | None = None,
 ) -> TrainingResult:
     """Split, scale, and fit `model` on `dataset`.
 
@@ -68,6 +69,12 @@ def train_model(
             through to chronological_split for purging).
         train_pct: Fraction of rows allocated to training.
         val_pct: Fraction of rows allocated to validation.
+        feature_columns: Which columns to use as X, forwarded directly to
+            separate_features_and_target. Defaults to FEATURE_COLUMNS
+            when not provided, so existing callers are unaffected. Pass
+            an explicit list to train against a different feature-set
+            configuration (e.g. comparing feature sets against each
+            other).
 
     Returns:
         A TrainingResult with the fitted model, fitted scaler, and the
@@ -75,9 +82,10 @@ def train_model(
 
     Raises:
         ValueError: Propagated from chronological_split (invalid split
-            config or an empty partition after purging) or from
-            validate_all_classes_present (training partition missing a
-            required class).
+            config or an empty partition after purging), from
+            separate_features_and_target (empty or missing
+            feature_columns), or from validate_all_classes_present
+            (training partition missing a required class).
     """
     train, val, test = chronological_split(
         dataset,
@@ -86,7 +94,7 @@ def train_model(
         val_pct=val_pct,
     )
 
-    X_train, y_train = separate_features_and_target(train)
+    X_train, y_train = separate_features_and_target(train, feature_columns=feature_columns)
     validate_all_classes_present(y_train)
 
     scaler = fit_scaler(X_train)
