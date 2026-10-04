@@ -29,6 +29,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+import numpy as np
 import pandas as pd
 
 from data.dataframe import candles_to_dataframe
@@ -57,12 +58,31 @@ SYMBOL = "XAU/USD"
 SYMBOL_FOR_FILENAMES = "XAUUSD"
 TIMEFRAME = "1h"
 RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
+
+# Secondary instrument for cross-asset features (features/cross_asset.py).
+# Silver was picked because it shares a provider and fetch/cache pattern
+# with XAU/USD already, and the gold-silver ratio is a well-known,
+# independent signal the single-symbol feature set cannot see at all.
+# Set to None to disable and fall back to the original single-symbol
+# feature sets untouched.
+SECONDARY_SYMBOL = "EUR/USD"
+SECONDARY_SYMBOL_FOR_FILENAMES = "EURUSD"
+SECONDARY_RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SECONDARY_SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
+CROSS_ASSET_CORR_WINDOW = 20
 EXPERIMENT_LOG_PATH = PROJECT_ROOT / "experiments" / "experiments.jsonl"
 MODELS_DIR = PROJECT_ROOT / "models"
 
 TOTAL_CANDLES = 20_000  # ~2.3 years of 1h XAUUSD data, via paginated fetch
 HORIZON = 5
 THRESHOLD = 0.005
+# Tested and rejected -- see README's label-threshold investigation.
+# A wider fixed threshold and this ATR-relative scheme both scored worse
+# on test macro-F1 than the plain fixed threshold above, across three
+# separate label designs. Kept available (see features/labeling.py and
+# features/pipeline.py) in case a future feature/data change reopens the
+# question, but left off here since the fixed threshold already won.
+USE_VOLATILITY_THRESHOLD = False
+VOLATILITY_MULTIPLIER = 1.5
 TRAIN_PCT = 0.70
 VAL_PCT = 0.15
 RANDOM_STATE = 42
@@ -94,6 +114,8 @@ FEATURE_SET_PLUS_MOMENTUM_RANGE = "plus_momentum_range"
 
 MOMENTUM_COLUMNS = ["return_3", "return_10", "return_20"]
 RANGE_COLUMNS = ["range_position"]
+CROSS_ASSET_COLUMNS = ["secondary_log_return", "ratio_log_return", "rolling_correlation"]
+FEATURE_SET_PLUS_XAG = "plus_xag"
 
 
 @dataclass
@@ -110,6 +132,12 @@ FEATURE_SETS: list[FeatureSet] = [
     FeatureSet(FEATURE_SET_PLUS_RANGE, FEATURE_COLUMNS + RANGE_COLUMNS),
     FeatureSet(FEATURE_SET_PLUS_MOMENTUM_RANGE, FEATURE_COLUMNS + MOMENTUM_COLUMNS + RANGE_COLUMNS),
 ]
+# Added only when SECONDARY_SYMBOL is set -- kept as its own candidate
+# rather than folded into the sets above, so the comparison honestly
+# shows whether cross-asset information helps at all before assuming it
+# should be combined with momentum/range too.
+if SECONDARY_SYMBOL is not None:
+    FEATURE_SETS.append(FeatureSet(FEATURE_SET_PLUS_XAG, FEATURE_COLUMNS + CROSS_ASSET_COLUMNS))
 
 
 @dataclass
@@ -138,29 +166,40 @@ class Candidate:
     val_trading: dict
 
 
-def load_or_fetch_raw_ohlcv(repository: CSVRepository, provider) -> pd.DataFrame:
+def load_or_fetch_raw_ohlcv(
+    repository: CSVRepository,
+    provider,
+    symbol: str = SYMBOL,
+    csv_path: Path = RAW_CSV_PATH,
+    total_candles: int = TOTAL_CANDLES,
+) -> pd.DataFrame:
     """Load cached OHLCV data if present, otherwise fetch and cache it.
+
+    Takes `symbol`/`csv_path`/`total_candles` as parameters (defaulting to
+    the primary XAU/USD settings) so the same caching logic serves both
+    the primary symbol and any secondary instrument used for cross-asset
+    features, with each getting its own cache file.
 
     CSVRepository.save() writes via to_csv(index=False), which would
     silently drop a DatetimeIndex -- so the timestamp is moved into an
     ordinary column before saving, and restored as the index after
     loading, on both the cache-hit and cache-miss paths.
     """
-    if repository.exists(RAW_CSV_PATH):
-        print(f"Loading cached OHLCV data from {RAW_CSV_PATH}")
-        raw = repository.load(RAW_CSV_PATH)
+    if repository.exists(csv_path):
+        print(f"Loading cached OHLCV data from {csv_path}")
+        raw = repository.load(csv_path)
         raw["timestamp"] = pd.to_datetime(raw["timestamp"])
         return raw.set_index("timestamp")
 
-    print(f"No cached data found. Fetching {TOTAL_CANDLES} candles of {SYMBOL} {TIMEFRAME} "
-          f"(paginated, ~{-(-TOTAL_CANDLES // 5000)} requests)...")
+    print(f"No cached data found. Fetching {total_candles} candles of {symbol} {TIMEFRAME} "
+          f"(paginated, ~{-(-total_candles // 5000)} requests)...")
     service = MarketDataService(provider)
-    candles = service.get_historical_candles(symbol=SYMBOL, timeframe=TIMEFRAME, total_candles=TOTAL_CANDLES)
+    candles = service.get_historical_candles(symbol=symbol, timeframe=TIMEFRAME, total_candles=total_candles)
     raw = candles_to_dataframe(candles)
     print(f"Fetched {len(raw)} candles.")
 
-    repository.save(raw.reset_index(), RAW_CSV_PATH)
-    print(f"Cached raw data to {RAW_CSV_PATH}")
+    repository.save(raw.reset_index(), csv_path)
+    print(f"Cached raw data to {csv_path}")
 
     return raw
 
@@ -288,14 +327,94 @@ def print_candidate_summary_table(candidates: list[Candidate]) -> None:
         )
 
 
+def error_analysis(
+    test: pd.DataFrame,
+    y_test: pd.Series,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+    feature_columns: list[str],
+) -> dict:
+    """Break down TEST-set errors by confusion type, model confidence, and
+    volatility regime (atr_pct quartile), to find patterns a single
+    macro-F1 number can't show.
+
+    Read-only diagnostic on the already-selected winner -- runs once,
+    after the winner is locked in by validation macro-F1, so it carries
+    none of the repeated-test-peeking risk the candidate comparison above
+    is careful to avoid. Never feeds back into model selection.
+    """
+    label_to_name = dict(zip(CLASS_LABELS, CLASS_NAMES))
+
+    frame = pd.DataFrame(
+        {
+            "true": [label_to_name[label] for label in y_test],
+            "pred": [label_to_name[label] for label in y_pred],
+            "confidence": y_proba.max(axis=1),
+        },
+        index=test.index,
+    )
+    frame["correct"] = frame["true"] == frame["pred"]
+
+    print("\n=== Error analysis (TEST set) ===")
+
+    print("\n-- Confusion breakdown (rows = true, columns = predicted) --")
+    confusion_counts = frame.groupby(["true", "pred"]).size().unstack(fill_value=0)
+    print(confusion_counts)
+
+    print("\n-- Mean prediction confidence: correct vs incorrect, by true class --")
+    confidence_by_class = frame.groupby(["true", "correct"])["confidence"].agg(["mean", "count"])
+    print(confidence_by_class)
+
+    # confidence_by_class has a (true, correct) MultiIndex, and json.dumps
+    # can't serialize tuple keys -- reset_index() flattens it to plain
+    # columns first, which to_dict(orient="records") turns into a list of
+    # ordinary str-keyed dicts.
+    confidence_by_class_flat = confidence_by_class.reset_index()
+    confidence_by_class_flat["correct"] = confidence_by_class_flat["correct"].astype(bool)
+
+    result = {
+        "confusion_counts": confusion_counts.to_dict(),
+        "confidence_by_class": confidence_by_class_flat.to_dict(orient="records"),
+    }
+
+    if "atr_pct" in feature_columns:
+        frame["volatility_quartile"] = pd.qcut(
+            test["atr_pct"], 4, labels=["Q1 (calm)", "Q2", "Q3", "Q4 (volatile)"],
+        )
+
+        print("\n-- Accuracy by volatility quartile (atr_pct) --")
+        accuracy_by_vol = frame.groupby("volatility_quartile")["correct"].mean()
+        print(accuracy_by_vol)
+
+        print("\n-- SELL/BUY recall by volatility quartile (with counts) --")
+        directional = frame[frame["true"] != "HOLD"]
+        recall_by_vol = directional.groupby(["volatility_quartile", "true"])["correct"].agg(["mean", "count"])
+        print(recall_by_vol)
+
+        result["accuracy_by_volatility_quartile"] = accuracy_by_vol.to_dict()
+        recall_by_vol_flat = recall_by_vol.reset_index()
+        result["directional_recall_by_volatility_quartile"] = recall_by_vol_flat.to_dict(orient="records")
+
+    return result
+
+
 def main(provider=None) -> None:
     provider = provider or TwelveDataProvider()
     repository = CSVRepository()
 
     raw_ohlcv = load_or_fetch_raw_ohlcv(repository, provider)
 
+    secondary_raw_ohlcv = None
+    if SECONDARY_SYMBOL is not None:
+        print(f"\nFetching/loading secondary instrument {SECONDARY_SYMBOL} for cross-asset features...")
+        secondary_raw_ohlcv = load_or_fetch_raw_ohlcv(
+            repository, provider,
+            symbol=SECONDARY_SYMBOL, csv_path=SECONDARY_RAW_CSV_PATH, total_candles=TOTAL_CANDLES,
+        )
+
     print("Building feature dataset...")
-    dataset = build_feature_dataset(raw_ohlcv, horizon=HORIZON, threshold=THRESHOLD)
+    dataset = build_feature_dataset(raw_ohlcv, horizon=HORIZON, threshold=THRESHOLD,
+        use_volatility_threshold=USE_VOLATILITY_THRESHOLD, volatility_multiplier=VOLATILITY_MULTIPLIER)
     print(f"Feature dataset: {len(dataset)} rows after warm-up/horizon trimming.")
 
     # One chronological split, shared by every feature set and every model
@@ -303,16 +422,51 @@ def main(provider=None) -> None:
     # which columns are selected as features or how a model is tuned.
     train, val, test = chronological_split(dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT)
 
-    # --- Candidate comparison: 4 feature sets x 2 models = 8 candidates.
-    # Hyperparameters are tuned strictly within `train`; every candidate is
-    # then evaluated on VALIDATION only. None has touched test yet. ---
+    # The cross-asset feature set gets its OWN dataset/split, built with
+    # secondary_dataframe set, rather than merging cross-asset columns
+    # into the shared `dataset` above. That matters: the cross-asset
+    # columns have their own warm-up/alignment NaNs (correlation window,
+    # secondary symbol's own history), and build_feature_dataset drops
+    # any row with a NaN in ANY engineered column. Sharing one dataset
+    # would silently shrink the sample for base/plus_momentum/plus_range/
+    # plus_momentum_range too, confounding their comparison with
+    # something that has nothing to do with those feature sets.
+    xag_train = xag_val = xag_test = None
+    if SECONDARY_SYMBOL is not None:
+        print(f"Building feature dataset with {SECONDARY_SYMBOL} cross-asset features...")
+        xag_dataset = build_feature_dataset(
+            raw_ohlcv, horizon=HORIZON, threshold=THRESHOLD,
+            use_volatility_threshold=USE_VOLATILITY_THRESHOLD, volatility_multiplier=VOLATILITY_MULTIPLIER,
+            secondary_dataframe=secondary_raw_ohlcv, cross_asset_corr_window=CROSS_ASSET_CORR_WINDOW,
+        )
+        print(f"Feature dataset with {SECONDARY_SYMBOL}: {len(xag_dataset)} rows "
+              f"(vs. {len(dataset)} without -- the difference is cross-asset warm-up/alignment).")
+        xag_train, xag_val, xag_test = chronological_split(
+            xag_dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT,
+        )
+
+    # Each feature set uses its own (train, val, test) -- the single-symbol
+    # sets use the shared split above; plus_xag uses its own, built from
+    # its own dataset. Looked up again after the winner is picked, so the
+    # final test-set check and persistence use the matching partition.
+    partitions_by_feature_set = {
+        feature_set.name: (train, val, test) for feature_set in FEATURE_SETS
+    }
+    if FEATURE_SET_PLUS_XAG in partitions_by_feature_set:
+        partitions_by_feature_set[FEATURE_SET_PLUS_XAG] = (xag_train, xag_val, xag_test)
+
+    # --- Candidate comparison: up to 5 feature sets x 2 models =
+    # up to 10 candidates. Hyperparameters are tuned strictly within each
+    # candidate's own `train`; every candidate is then evaluated on its
+    # own VALIDATION only. None has touched any test partition yet. ---
     candidates: list[Candidate] = []
     for feature_set in FEATURE_SETS:
+        fs_train, fs_val, _fs_test = partitions_by_feature_set[feature_set.name]
         print(
             f"\nTuning + evaluating feature set '{feature_set.name}' "
             f"({len(feature_set.columns)} features)...",
         )
-        candidates.extend(train_and_evaluate_feature_set(train, val, feature_set))
+        candidates.extend(train_and_evaluate_feature_set(fs_train, fs_val, feature_set))
 
     print_candidate_summary_table(candidates)
 
@@ -343,10 +497,15 @@ def main(provider=None) -> None:
         print("\n=== Random Forest -- feature importances ===")
         print(winner.model.get_feature_importances())
 
+    # Winner's own partitions -- identical to the shared (train, val, test)
+    # for every feature set except plus_xag, which gets its separately
+    # built (xag_train, xag_val, xag_test).
+    winner_train, winner_val, winner_test = partitions_by_feature_set[winner.feature_set_name]
+
     # --- Winner only: ONE final, one-time test-set check. No other
     # candidate, and no hyperparameter trial, is ever evaluated on test. ---
-    X_train, y_train = separate_features_and_target(train, feature_columns=winner.feature_columns)
-    X_test, y_test = separate_features_and_target(test, feature_columns=winner.feature_columns)
+    X_train, y_train = separate_features_and_target(winner_train, feature_columns=winner.feature_columns)
+    X_test, y_test = separate_features_and_target(winner_test, feature_columns=winner.feature_columns)
     X_test_scaled = apply_scaler(winner.scaler, X_test)
 
     y_pred = winner.model.predict(X_test_scaled)
@@ -360,10 +519,14 @@ def main(provider=None) -> None:
     print(f"\n=== {winner.model_name} ({winner.feature_set_name}) "
           f"-- trading report (TEST set, final check only) ===")
     test_trading = trading_report(
-        y_pred, y_proba, test, horizon=HORIZON,
+        y_pred, y_proba, winner_test, horizon=HORIZON,
         min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
     )
     print(test_trading)
+
+    error_analysis_results = error_analysis(
+        winner_test, y_test, y_pred, y_proba, winner.feature_columns,
+    )
 
     # Baselines are a fixed reference floor, not candidates being chosen
     # between, so evaluating them on test carries none of the
@@ -376,8 +539,8 @@ def main(provider=None) -> None:
     print(classification_report(y_test, majority_pred, majority_proba))
 
     rule_based_baseline = RuleBasedBaseline()
-    rule_pred = rule_based_baseline.predict(test)
-    rule_proba = rule_based_baseline.predict_proba(test)
+    rule_pred = rule_based_baseline.predict(winner_test)
+    rule_proba = rule_based_baseline.predict_proba(winner_test)
     print("\n=== Rule-based baseline -- classification report (test set) ===")
     print(classification_report(y_test, rule_pred, rule_proba))
 
@@ -392,6 +555,7 @@ def main(provider=None) -> None:
             }
             for trial in winner.tuning_trials
         ],
+        "error_analysis": error_analysis_results,
     }
     if winner.model_name == "RandomForest":
         evaluation_metrics["feature_importances"] = winner.model.get_feature_importances()
@@ -408,12 +572,12 @@ def main(provider=None) -> None:
         threshold=THRESHOLD,
         symbol=SYMBOL,
         timeframe=TIMEFRAME,
-        train_start=str(train.index.min()),
-        train_end=str(train.index.max()),
-        val_start=str(val.index.min()),
-        val_end=str(val.index.max()),
-        test_start=str(test.index.min()),
-        test_end=str(test.index.max()),
+        train_start=str(winner_train.index.min()),
+        train_end=str(winner_train.index.max()),
+        val_start=str(winner_val.index.min()),
+        val_end=str(winner_val.index.max()),
+        test_start=str(winner_test.index.min()),
+        test_end=str(winner_test.index.max()),
         class_distribution=build_class_distribution(y_train),
         evaluation_metrics=evaluation_metrics,
         **current_library_versions(),

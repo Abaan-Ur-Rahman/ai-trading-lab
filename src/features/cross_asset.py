@@ -1,0 +1,75 @@
+"""Cross-asset features derived from a second, correlated instrument.
+
+These exist because the current feature set (EMA/RSI/ATR/MACD/returns, all
+derived from XAUUSD's own OHLCV) was shown, via a binary direction test and
+a horizon sweep documented in the README, to carry only a small (~2-4
+percentage point) directional edge that does not improve with more
+tuning. A second, correlated instrument (e.g. XAG/USD) is genuinely new
+information the single-symbol feature set cannot see at all -- not
+another transform of the same price series.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+
+def align_secondary_close(
+    primary_index: pd.DatetimeIndex,
+    secondary_close: pd.Series,
+) -> pd.Series:
+    """Align a secondary instrument's close prices onto the primary index.
+
+    Forward-fills gaps (e.g. the secondary symbol missing a bar the
+    primary has) using only that secondary instrument's own past values --
+    never looks ahead. Timestamps in `primary_index` before the secondary
+    series' first observation stay NaN, since there is no past secondary
+    value yet.
+    """
+    return secondary_close.reindex(primary_index, method="ffill")
+
+
+def build_cross_asset_features(
+    primary_close: pd.Series,
+    secondary_close: pd.Series,
+    corr_window: int = 20,
+) -> pd.DataFrame:
+    """Build features comparing `primary_close` to a second instrument.
+
+    `secondary_close` is first aligned onto `primary_close`'s index
+    (forward-filled, causal -- see align_secondary_close). Returns three
+    columns, each using only current/past information at every row:
+
+    - secondary_log_return: the second instrument's own 1-bar log return.
+    - ratio_log_return: 1-bar log change in the primary/secondary price
+      ratio (e.g. the gold/silver ratio) -- captures relative moves
+      between the two instruments, not just each one's own direction.
+    - rolling_correlation: trailing `corr_window`-bar correlation between
+      the two instruments' 1-bar log returns -- whether they are
+      currently moving together or decoupling.
+
+    Leading rows without enough history are NaN, the same warm-up
+    convention as feature_builder.py. Does not mutate either input Series.
+    """
+    if corr_window <= 1:
+        raise ValueError("corr_window must be greater than 1")
+
+    aligned_secondary = align_secondary_close(primary_close.index, secondary_close)
+
+    primary_log_return = np.log(primary_close / primary_close.shift(1))
+    secondary_log_return = np.log(aligned_secondary / aligned_secondary.shift(1))
+
+    ratio = primary_close / aligned_secondary
+    ratio_log_return = np.log(ratio / ratio.shift(1))
+
+    rolling_correlation = primary_log_return.rolling(window=corr_window).corr(secondary_log_return)
+
+    return pd.DataFrame(
+        {
+            "secondary_log_return": secondary_log_return,
+            "ratio_log_return": ratio_log_return,
+            "rolling_correlation": rolling_correlation,
+        },
+        index=primary_close.index,
+    )
