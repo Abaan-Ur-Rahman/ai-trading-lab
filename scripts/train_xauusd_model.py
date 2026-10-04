@@ -1,21 +1,21 @@
 """End-to-end training script: fetch XAUUSD 1h data, train, evaluate, persist.
 
 This is orchestration, not a src/ layer module: every function it calls
-(data fetching, feature building, splitting, scaling, training, baselines,
-evaluation, persistence, experiment logging) already has its own unit
-tests. This script just wires them together in the right order and is not
-itself unit tested, the same way a thin CLI entry point normally isn't --
-the logic worth testing lives one level down, where it's already covered.
+(data fetching, feature building, splitting, scaling, tuning, evaluation,
+persistence, experiment logging) already has its own unit tests. This
+script just wires them together in the right order and is not itself unit
+tested, the same way a thin CLI entry point normally isn't -- the logic
+worth testing lives one level down, where it's already covered.
 
 Model selection: 4 feature-set configurations (base / plus_momentum /
 plus_range / plus_momentum_range) x 2 models (LogisticRegression,
-RandomForest) = 8 candidates, every one trained and evaluated on
-VALIDATION only. Whichever has the higher validation macro-F1 is the
-winner, decided here in code -- not assumed or hardcoded -- and only the
-winner gets the one-time, final TEST-set check and gets persisted. No
-other candidate is ever evaluated on test, since repeatedly looking at
-test across candidates is the same test-set leakage we're avoiding by not
-using test for selection in the first place.
+RandomForest) = 8 candidates. Each candidate's hyperparameters are first
+selected via chronological cross-validation strictly within the TRAIN
+partition (see ml.tuning), then evaluated on VALIDATION only. Whichever
+candidate has the higher validation macro-F1 is the winner, decided here
+in code -- and only the winner gets the one-time, final TEST-set check and
+gets persisted. No other candidate, and no hyperparameter trial, ever
+touches validation or test except for the winner's own one-time check.
 
 Run with: python scripts/train_xauusd_model.py
 """
@@ -38,14 +38,20 @@ from data.storage.csv_repository import CSVRepository
 from features.pipeline import build_feature_dataset
 from features.scaling import FeatureScaler, apply_scaler
 from ml.baseline import MajorityClassBaseline, RuleBasedBaseline
-from ml.dataset import CLASS_LABELS, CLASS_NAMES, FEATURE_COLUMNS, separate_features_and_target
+from ml.dataset import (
+    CLASS_LABELS,
+    CLASS_NAMES,
+    FEATURE_COLUMNS,
+    chronological_split,
+    separate_features_and_target,
+)
 from ml.evaluation import classification_report, trading_report
 from ml.experiment_tracking import log_experiment
 from ml.models.base import ModelWrapper
 from ml.models.logistic_regression import LogisticRegressionModel
 from ml.models.random_forest import RandomForestModel
 from ml.persistence import ModelMetadata, current_library_versions, save_model
-from ml.training import TrainingResult, train_model
+from ml.tuning import TuningTrial, tune_hyperparameters
 
 SYMBOL = "XAU/USD"
 SYMBOL_FOR_FILENAMES = "XAUUSD"
@@ -65,6 +71,17 @@ TRANSACTION_COST_PCT = 0.0005
 
 LOGREG_CLASS_WEIGHT = "balanced"
 RF_CLASS_WEIGHT = "balanced"
+
+# Kept intentionally small -- this is model/hyperparameter selection, not
+# an aggressive search. See ml.tuning for how these are evaluated
+# (chronological CV strictly within the train partition).
+LOGREG_PARAM_GRID = {"C": [0.01, 0.1, 1.0, 10.0]}
+RF_PARAM_GRID = {
+    "n_estimators": [100, 200],
+    "max_depth": [None, 10, 20],
+    "min_samples_leaf": [1, 2, 5],
+}
+TUNING_N_SPLITS = 3
 
 # Feature-set names are constants, not strings built inline at each call
 # site, so a typo in one place can't silently create a mismatched or
@@ -100,8 +117,9 @@ class Candidate:
     """One (feature set, model) combination competing for selection.
 
     Carries its own scaler because a scaler fit on one feature set's
-    columns cannot be reused for a different feature set -- different
-    column counts, different per-column statistics.
+    columns cannot be reused for a different feature set. best_hyperparameters
+    and tuning_trials come straight from this candidate's TuningResult, so
+    the full search history survives for inspection, not just the winner.
     """
 
     feature_set_name: str
@@ -112,6 +130,8 @@ class Candidate:
     model: ModelWrapper
     scaler: FeatureScaler
     model_directory: Path
+    best_hyperparameters: dict
+    tuning_trials: list[TuningTrial]
     val_macro_f1: float
     val_log_loss: float
     val_classification: dict
@@ -165,30 +185,47 @@ def model_directory_for(model_tag: str, class_weight: str | None, feature_set_na
     )
 
 
-def evaluate_candidate(
+def tune_and_evaluate_candidate(
     feature_set: FeatureSet,
     model_name: str,
     model_tag: str,
-    class_weight: str | None,
-    model: ModelWrapper,
-    scaler: FeatureScaler,
-    X_val_scaled: pd.DataFrame,
-    y_val: pd.Series,
-    val_ohlcv: pd.DataFrame,
+    model_factory,
+    param_grid: dict[str, list],
+    fixed_params: dict,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
 ) -> Candidate:
-    """Evaluate one fitted (feature set, model) combination on VALIDATION only.
+    """Tune one model's hyperparameters on `train`, then evaluate on `val`.
 
-    Never touches test -- that's reserved for whichever candidate wins
-    across every feature-set/model combination.
+    Hyperparameter selection happens entirely inside tune_hyperparameters,
+    strictly within `train` (see ml.tuning for the chronological-CV
+    mechanics). The returned model/scaler are already fit on the full
+    train partition with the winning hyperparameters -- this function
+    only adds the VALIDATION-set evaluation on top. Never touches test.
     """
-    val_pred = model.predict(X_val_scaled)
-    val_proba = model.predict_proba(X_val_scaled)
+    tuning_result = tune_hyperparameters(
+        model_factory=model_factory,
+        param_grid=param_grid,
+        fixed_params=fixed_params,
+        train=train,
+        horizon=HORIZON,
+        feature_columns=feature_set.columns,
+        n_splits=TUNING_N_SPLITS,
+    )
+
+    X_val, y_val = separate_features_and_target(val, feature_columns=feature_set.columns)
+    X_val_scaled = apply_scaler(tuning_result.scaler, X_val)
+
+    val_pred = tuning_result.model.predict(X_val_scaled)
+    val_proba = tuning_result.model.predict_proba(X_val_scaled)
 
     val_classification = classification_report(y_val, val_pred, val_proba)
     val_trading = trading_report(
-        val_pred, val_proba, val_ohlcv, horizon=HORIZON,
+        val_pred, val_proba, val, horizon=HORIZON,
         min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
     )
+
+    class_weight = fixed_params.get("class_weight")
 
     return Candidate(
         feature_set_name=feature_set.name,
@@ -196,9 +233,11 @@ def evaluate_candidate(
         model_name=model_name,
         model_tag=model_tag,
         class_weight=class_weight,
-        model=model,
-        scaler=scaler,
+        model=tuning_result.model,
+        scaler=tuning_result.scaler,
         model_directory=model_directory_for(model_tag, class_weight, feature_set.name),
+        best_hyperparameters=tuning_result.best_hyperparameters,
+        tuning_trials=tuning_result.trials,
         val_macro_f1=val_classification["macro_f1"],
         val_log_loss=val_classification["log_loss"],
         val_classification=val_classification,
@@ -207,62 +246,31 @@ def evaluate_candidate(
 
 
 def train_and_evaluate_feature_set(
-    dataset: pd.DataFrame,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
     feature_set: FeatureSet,
-) -> tuple[TrainingResult, list[Candidate]]:
-    """Train LogReg and RF on one feature-set configuration, VALIDATION only.
-
-    Both models share one chronological split and one scaler, fit
-    specifically on this feature set's columns -- the same pattern the
-    single-feature-set version of this script used, just repeated once
-    per feature set instead of once overall.
-
-    Returns the LogReg TrainingResult (its train/val/test partitions are
-    identical to what a RandomForest-only run would have produced, since
-    chronological_split never depends on which columns are selected) so
-    the caller can look up the winner's exact split later without
-    recomputing it.
-    """
-    logreg_result = train_model(
-        LogisticRegressionModel(class_weight=LOGREG_CLASS_WEIGHT, random_state=RANDOM_STATE),
-        dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT,
-        feature_columns=feature_set.columns,
+) -> list[Candidate]:
+    """Tune and evaluate both models on one feature-set configuration."""
+    logreg_candidate = tune_and_evaluate_candidate(
+        feature_set, "LogisticRegression", "logreg", LogisticRegressionModel,
+        LOGREG_PARAM_GRID, {"class_weight": LOGREG_CLASS_WEIGHT, "random_state": RANDOM_STATE},
+        train, val,
     )
-
-    X_train, y_train = separate_features_and_target(
-        logreg_result.train, feature_columns=feature_set.columns,
+    rf_candidate = tune_and_evaluate_candidate(
+        feature_set, "RandomForest", "rf", RandomForestModel,
+        RF_PARAM_GRID, {"class_weight": RF_CLASS_WEIGHT, "random_state": RANDOM_STATE},
+        train, val,
     )
-    X_train_scaled = apply_scaler(logreg_result.scaler, X_train)
-
-    rf_model = RandomForestModel(class_weight=RF_CLASS_WEIGHT, random_state=RANDOM_STATE)
-    rf_model.fit(X_train_scaled, y_train)
-
-    X_val, y_val = separate_features_and_target(logreg_result.val, feature_columns=feature_set.columns)
-    X_val_scaled = apply_scaler(logreg_result.scaler, X_val)
-
-    candidates = [
-        evaluate_candidate(
-            feature_set, "LogisticRegression", "logreg", LOGREG_CLASS_WEIGHT,
-            logreg_result.model, logreg_result.scaler,
-            X_val_scaled, y_val, logreg_result.val,
-        ),
-        evaluate_candidate(
-            feature_set, "RandomForest", "rf", RF_CLASS_WEIGHT,
-            rf_model, logreg_result.scaler,
-            X_val_scaled, y_val, logreg_result.val,
-        ),
-    ]
-
-    return logreg_result, candidates
+    return [logreg_candidate, rf_candidate]
 
 
 def print_candidate_summary_table(candidates: list[Candidate]) -> None:
     """Print one compact row per (feature set, model) candidate.
 
-    With 4 feature sets x 2 models = 8 candidates, printing the full
-    classification + trading report for every one (as the earlier
-    2-candidate version of this script did) would be a wall of text.
-    Full detail is printed only for the overall winner, below.
+    With 4 feature sets x 2 models = 8 candidates, each with its own
+    hyperparameter search, printing full detail for every one would be
+    unreadable. Full detail -- including the tuning trial breakdown -- is
+    printed only for the overall winner, below.
     """
     header = (
         f"{'Feature set':<22} {'Model':<20} {'Class weight':<14} "
@@ -290,26 +298,39 @@ def main(provider=None) -> None:
     dataset = build_feature_dataset(raw_ohlcv, horizon=HORIZON, threshold=THRESHOLD)
     print(f"Feature dataset: {len(dataset)} rows after warm-up/horizon trimming.")
 
-    # --- Candidate comparison: 4 feature sets x 2 models = 8 candidates,
-    # every one evaluated on VALIDATION only. None has touched test yet. ---
-    candidates: list[Candidate] = []
-    training_results: dict[str, TrainingResult] = {}
+    # One chronological split, shared by every feature set and every model
+    # -- the split only depends on dataset length and horizon, never on
+    # which columns are selected as features or how a model is tuned.
+    train, val, test = chronological_split(dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT)
 
+    # --- Candidate comparison: 4 feature sets x 2 models = 8 candidates.
+    # Hyperparameters are tuned strictly within `train`; every candidate is
+    # then evaluated on VALIDATION only. None has touched test yet. ---
+    candidates: list[Candidate] = []
     for feature_set in FEATURE_SETS:
-        print(f"\nTraining feature set '{feature_set.name}' ({len(feature_set.columns)} features)...")
-        result, feature_set_candidates = train_and_evaluate_feature_set(dataset, feature_set)
-        training_results[feature_set.name] = result
-        candidates.extend(feature_set_candidates)
+        print(
+            f"\nTuning + evaluating feature set '{feature_set.name}' "
+            f"({len(feature_set.columns)} features)...",
+        )
+        candidates.extend(train_and_evaluate_feature_set(train, val, feature_set))
 
     print_candidate_summary_table(candidates)
 
     winner = max(candidates, key=lambda candidate: candidate.val_macro_f1)
-    winner_result = training_results[winner.feature_set_name]
 
     print(
         f"\nWinner: {winner.model_name} on feature set '{winner.feature_set_name}' "
         f"(val macro-F1={winner.val_macro_f1:.4f})",
     )
+    print(f"Selected hyperparameters: {winner.best_hyperparameters}")
+
+    print(f"\n=== {winner.model_name} ({winner.feature_set_name}) -- hyperparameter tuning trials ===")
+    for trial in sorted(winner.tuning_trials, key=lambda t: t.mean_macro_f1, reverse=True):
+        fold_scores_display = [f"{score:.4f}" for score in trial.fold_scores]
+        print(
+            f"  {trial.hyperparameters} -> mean macro-F1={trial.mean_macro_f1:.4f} "
+            f"(folds: {fold_scores_display})",
+        )
 
     print(f"\n=== {winner.model_name} ({winner.feature_set_name}) "
           f"-- classification report (VALIDATION set) ===")
@@ -322,15 +343,10 @@ def main(provider=None) -> None:
         print("\n=== Random Forest -- feature importances ===")
         print(winner.model.get_feature_importances())
 
-    # --- Winner only: ONE final, one-time test-set check, using the
-    # exact split the winner was trained and validated on. No other
-    # candidate is ever evaluated on test. ---
-    X_train, y_train = separate_features_and_target(
-        winner_result.train, feature_columns=winner.feature_columns,
-    )
-    X_test, y_test = separate_features_and_target(
-        winner_result.test, feature_columns=winner.feature_columns,
-    )
+    # --- Winner only: ONE final, one-time test-set check. No other
+    # candidate, and no hyperparameter trial, is ever evaluated on test. ---
+    X_train, y_train = separate_features_and_target(train, feature_columns=winner.feature_columns)
+    X_test, y_test = separate_features_and_target(test, feature_columns=winner.feature_columns)
     X_test_scaled = apply_scaler(winner.scaler, X_test)
 
     y_pred = winner.model.predict(X_test_scaled)
@@ -344,7 +360,7 @@ def main(provider=None) -> None:
     print(f"\n=== {winner.model_name} ({winner.feature_set_name}) "
           f"-- trading report (TEST set, final check only) ===")
     test_trading = trading_report(
-        y_pred, y_proba, winner_result.test, horizon=HORIZON,
+        y_pred, y_proba, test, horizon=HORIZON,
         min_confidence=MIN_CONFIDENCE, transaction_cost_pct=TRANSACTION_COST_PCT,
     )
     print(test_trading)
@@ -360,12 +376,23 @@ def main(provider=None) -> None:
     print(classification_report(y_test, majority_pred, majority_proba))
 
     rule_based_baseline = RuleBasedBaseline()
-    rule_pred = rule_based_baseline.predict(winner_result.test)
-    rule_proba = rule_based_baseline.predict_proba(winner_result.test)
+    rule_pred = rule_based_baseline.predict(test)
+    rule_proba = rule_based_baseline.predict_proba(test)
     print("\n=== Rule-based baseline -- classification report (test set) ===")
     print(classification_report(y_test, rule_pred, rule_proba))
 
-    evaluation_metrics = {"classification": test_classification, "trading": test_trading}
+    evaluation_metrics = {
+        "classification": test_classification,
+        "trading": test_trading,
+        "hyperparameter_tuning": [
+            {
+                "hyperparameters": trial.hyperparameters,
+                "fold_scores": trial.fold_scores,
+                "mean_macro_f1": trial.mean_macro_f1,
+            }
+            for trial in winner.tuning_trials
+        ],
+    }
     if winner.model_name == "RandomForest":
         evaluation_metrics["feature_importances"] = winner.model.get_feature_importances()
 
@@ -381,12 +408,12 @@ def main(provider=None) -> None:
         threshold=THRESHOLD,
         symbol=SYMBOL,
         timeframe=TIMEFRAME,
-        train_start=str(winner_result.train.index.min()),
-        train_end=str(winner_result.train.index.max()),
-        val_start=str(winner_result.val.index.min()),
-        val_end=str(winner_result.val.index.max()),
-        test_start=str(winner_result.test.index.min()),
-        test_end=str(winner_result.test.index.max()),
+        train_start=str(train.index.min()),
+        train_end=str(train.index.max()),
+        val_start=str(val.index.min()),
+        val_end=str(val.index.max()),
+        test_start=str(test.index.min()),
+        test_end=str(test.index.max()),
         class_distribution=build_class_distribution(y_train),
         evaluation_metrics=evaluation_metrics,
         **current_library_versions(),
@@ -398,8 +425,10 @@ def main(provider=None) -> None:
         EXPERIMENT_LOG_PATH, metadata, winner.model_directory,
         notes=(
             f"Selected by validation macro-F1 over {len(candidates)} candidates "
-            f"(4 feature sets x 2 models): {winner.model_name} on "
-            f"'{winner.feature_set_name}' (macro-F1={winner.val_macro_f1:.4f})"
+            f"(4 feature sets x 2 models, each hyperparameter-tuned via "
+            f"chronological CV on train only): {winner.model_name} on "
+            f"'{winner.feature_set_name}' (macro-F1={winner.val_macro_f1:.4f}), "
+            f"hyperparameters={winner.best_hyperparameters}"
         ),
     )
     print(f"Experiment logged to {EXPERIMENT_LOG_PATH}")
