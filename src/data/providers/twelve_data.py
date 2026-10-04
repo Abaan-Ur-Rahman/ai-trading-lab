@@ -7,14 +7,40 @@ Twelve Data REST API.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+import re
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
 from data.models import MarketCandle
 from data.providers.base import MarketDataProvider
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# Deliberately duplicated from data.services.market_data's own timeframe
+# parsing (not imported from there) to avoid a provider depending on a
+# service-layer module -- this provider only needs it internally, to
+# compute how far back to page when topping up a validation-skip
+# shortfall (see get_candles).
+_TIMEFRAME_PATTERN = re.compile(r"^(\d+)(min|h|day|week)$")
+_UNIT_TO_TIMEDELTA_KWARGS = {"min": "minutes", "h": "hours", "day": "days", "week": "weeks"}
+
+
+def _timeframe_to_timedelta(timeframe: str) -> timedelta:
+    match = _TIMEFRAME_PATTERN.match(timeframe)
+    if not match:
+        # Not every timeframe string Twelve Data accepts needs to be
+        # parseable here (e.g. month-based intervals) -- it only matters
+        # for the topup path below, which simply skips topping up if it
+        # can't compute a step, rather than raising.
+        raise ValueError(f"Cannot compute a timedelta for timeframe {timeframe!r}")
+    quantity, unit = match.groups()
+    return timedelta(**{_UNIT_TO_TIMEDELTA_KWARGS[unit]: int(quantity)})
 
 
 class TwelveDataProvider(MarketDataProvider):
@@ -23,6 +49,8 @@ class TwelveDataProvider(MarketDataProvider):
     BASE_URL = "https://api.twelvedata.com"
     ENDPOINT = "/time_series"
     TIMEOUT = 10.0
+    MAX_TOPUP_ATTEMPTS = 2
+    TOPUP_SLEEP_SECONDS = 1.0
 
     def __init__(self) -> None:
         """Initialize the Twelve Data provider.
@@ -70,14 +98,20 @@ class TwelveDataProvider(MarketDataProvider):
         Returns
         -------
         list[MarketCandle]
-            Validated candles sorted from oldest to newest.
-
-        Raises
-        ------
-        ValueError
-            If ``limit`` is not a positive integer.
+            Validated candles sorted from oldest to newest. A record whose
+            OHLC values fail MarketCandle's logical-relationship checks
+            (e.g. high below open/close) is skipped and logged rather than
+            raised -- this is tolerated because it has been observed in
+            practice on the newest, still-forming candle in a live feed
+            (its high/low can momentarily lag behind a tick that has
+            already moved open/close), not because the validation itself
+            is being loosened. A record with a bad field *type*, a bad
+            datetime, or a response that is malformed at the API level
+            still raises, since those indicate a broken response shape
+            rather than one noisy tick.
         RuntimeError
-            If Twelve Data returns an API-level error or malformed data.
+            If Twelve Data returns an API-level error, or a record has a
+            malformed field type or datetime.
         httpx.HTTPError
             If the HTTP request itself fails.
         """
@@ -87,6 +121,87 @@ class TwelveDataProvider(MarketDataProvider):
         if limit <= 0:
             raise ValueError("limit must be a positive integer")
 
+        candles, raw_record_count = self._fetch_page(
+            symbol=symbol, timeframe=timeframe, limit=limit, end_date=end_date,
+        )
+
+        # MarketDataService's pagination (get_historical_candles) treats a
+        # short return from this method as "the provider has no more
+        # history," and stops. That's only true when the API itself
+        # returned fewer raw records than asked (raw_record_count <
+        # limit) -- not when the API returned a full page but validation
+        # dropped one or more candles from it. Left uncorrected, a single
+        # skipped candle in an early page would make a 20,000-candle
+        # fetch silently stop at ~5,000, which is worse than the crash
+        # this replaced. So: only when the API actually had enough raw
+        # records, make a small, bounded number of follow-up requests
+        # further back in time to make up the shortfall, keeping this
+        # method's short-return-means-end-of-history contract intact for
+        # callers. If the API itself ran out of data (raw_record_count <
+        # limit), that is returned exactly as before -- no topup.
+        attempts = 0
+        while (
+            len(candles) < limit
+            and raw_record_count == limit
+            and attempts < self.MAX_TOPUP_ATTEMPTS
+        ):
+            if not candles:
+                # No surviving candle to anchor the next window on (every
+                # record in the page so far failed validation) -- rather
+                # than guess at a timestamp, stop here and return what we
+                # have (possibly empty), same as if topup didn't exist.
+                break
+
+            attempts += 1
+            shortfall = limit - len(candles)
+
+            try:
+                step = _timeframe_to_timedelta(timeframe)
+            except ValueError:
+                # Can't compute how far back to page for this timeframe
+                # (e.g. a month-based interval) -- stop topping up rather
+                # than guess; the caller gets a slightly short result,
+                # same as if this topup mechanism didn't exist.
+                break
+
+            earliest = min(candle.timestamp for candle in candles)
+            topup_end_date = (earliest - step).strftime("%Y-%m-%d %H:%M:%S")
+
+            logger.warning(
+                "Topping up %d candle(s) for %s %s after validation skip "
+                "(attempt %d/%d)...",
+                shortfall, symbol, timeframe, attempts, self.MAX_TOPUP_ATTEMPTS,
+            )
+            time.sleep(self.TOPUP_SLEEP_SECONDS)
+
+            more_candles, raw_record_count = self._fetch_page(
+                symbol=symbol, timeframe=timeframe, limit=shortfall, end_date=topup_end_date,
+            )
+
+            existing_timestamps = {candle.timestamp for candle in candles}
+            candles.extend(
+                candle for candle in more_candles if candle.timestamp not in existing_timestamps
+            )
+
+        candles.sort(key=lambda candle: candle.timestamp)
+
+        return candles
+
+    def _fetch_page(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        end_date: str | None,
+    ) -> tuple[list[MarketCandle], int]:
+        """Request one page from Twelve Data and parse it into candles.
+
+        Returns both the successfully-parsed candles and the raw record
+        count the API returned (before any validation skips), so the
+        caller can tell a validation skip apart from the API itself
+        having fewer records -- see get_candles for why that distinction
+        matters.
+        """
         params = {
             "symbol": symbol,
             "interval": timeframe,
@@ -132,18 +247,39 @@ class TwelveDataProvider(MarketDataProvider):
                 "Unexpected Twelve Data response: 'values' must be a list"
             )
 
-        candles = [
-            self._record_to_candle(
-                symbol=symbol,
-                timeframe=timeframe,
-                record=record,
+        candles: list[MarketCandle] = []
+        skipped_count = 0
+
+        for record in values:
+            try:
+                candles.append(
+                    self._record_to_candle(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        record=record,
+                    ),
+                )
+            except ValidationError as exc:
+                # Only the OHLC logical-relationship / positive-price
+                # checks land here (MarketCandle's own validators) --
+                # _record_to_candle already converts bad field types or a
+                # bad datetime into RuntimeError below, before
+                # MarketCandle is ever constructed, and those still raise.
+                skipped_count += 1
+                logger.warning(
+                    "Skipping malformed candle for %s %s at %s: %s",
+                    symbol, timeframe, record.get("datetime", "<unknown>"), exc,
+                )
+
+        if skipped_count:
+            logger.warning(
+                "Skipped %d of %d candle(s) for %s %s due to invalid OHLC data",
+                skipped_count, len(values), symbol, timeframe,
             )
-            for record in values
-        ]
 
         candles.sort(key=lambda candle: candle.timestamp)
 
-        return candles
+        return candles, len(values)
 
     @staticmethod
     def _record_to_candle(

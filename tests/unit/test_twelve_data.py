@@ -290,3 +290,192 @@ def test_request_omits_end_date_when_not_provided(
     provider.get_candles("BTC/USD", "1h", limit=3)
 
     assert "end_date" not in seen["params"]
+
+def test_malformed_ohlc_record_is_skipped_not_raised(
+    provider: TwelveDataProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A record failing MarketCandle's OHLC-relationship checks is skipped,
+    not raised -- observed in practice on a still-forming live candle."""
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "status": "ok",
+        "values": [
+            {
+                "datetime": "2024-01-01 10:00:00",
+                "open": "100.0", "high": "105.0", "low": "95.0", "close": "103.0", "volume": "1250.5",
+            },
+            {
+                # high (1.091) below open/close -- physically impossible,
+                # the exact shape of the real failure this guards against.
+                "datetime": "2024-01-01 11:00:00",
+                "open": "1.095", "high": "1.091", "low": "1.090", "close": "1.094", "volume": None,
+            },
+        ],
+    }
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", lambda *args, **kwargs: response)
+
+    candles = provider.get_candles("EUR/USD", "1h", limit=2)
+
+    assert len(candles) == 1
+    assert candles[0].timestamp == datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc)
+
+
+def test_topup_requests_more_when_api_had_a_full_page_but_one_record_was_skipped(
+    provider: TwelveDataProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the API returns exactly `limit` raw records but one fails
+    validation, get_candles should request more (not return short) so a
+    validation skip never looks like 'the API ran out of history' to
+    MarketDataService's pagination."""
+    first_response = Mock()
+    first_response.raise_for_status.return_value = None
+    first_response.json.return_value = {
+        "status": "ok",
+        "values": [
+            {
+                "datetime": "2024-01-01 11:00:00",
+                "open": "100.0", "high": "105.0", "low": "95.0", "close": "103.0", "volume": "1250.5",
+            },
+            {
+                # malformed -- high below open/close
+                "datetime": "2024-01-01 12:00:00",
+                "open": "101.0", "high": "99.0", "low": "95.0", "close": "100.5", "volume": "1300.0",
+            },
+        ],
+    }
+    topup_response = Mock()
+    topup_response.raise_for_status.return_value = None
+    topup_response.json.return_value = {
+        "status": "ok",
+        "values": [
+            {
+                "datetime": "2024-01-01 10:00:00",
+                "open": "99.0", "high": "104.0", "low": "94.0", "close": "102.0", "volume": "1200.0",
+            },
+        ],
+    }
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_get(url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> Mock:
+        calls.append(params)
+        return first_response if len(calls) == 1 else topup_response
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", fake_get)
+    monkeypatch.setattr("data.providers.twelve_data.time.sleep", lambda seconds: None)
+
+    candles = provider.get_candles("EUR/USD", "1h", limit=2)
+
+    assert len(candles) == 2
+    assert [c.timestamp for c in candles] == sorted(c.timestamp for c in candles)
+    assert len(calls) == 2
+    # The topup request should ask for exactly the shortfall (1), ending
+    # before the earliest candle already in hand.
+    assert calls[1]["outputsize"] == 1
+    assert calls[1]["end_date"] == "2024-01-01 10:00:00"
+
+
+def test_no_topup_when_api_itself_returned_fewer_than_requested(
+    provider: TwelveDataProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short raw response (no skips involved) means the API itself ran
+    out of data -- get_candles must NOT top this up, preserving
+    MarketDataService's 'short return means end of history' contract."""
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "status": "ok",
+        "values": [
+            {
+                "datetime": "2024-01-01 10:00:00",
+                "open": "100.0", "high": "105.0", "low": "95.0", "close": "103.0", "volume": "1250.5",
+            },
+        ],
+    }
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_get(url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> Mock:
+        calls.append(params)
+        return response
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", fake_get)
+
+    candles = provider.get_candles("EUR/USD", "1h", limit=5)
+
+    assert len(candles) == 1
+    assert len(calls) == 1  # no topup attempted
+
+
+def test_topup_does_not_guess_when_nothing_survived_to_anchor_on(
+    provider: TwelveDataProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the only record(s) in the page all fail validation, there is no
+    surviving timestamp to page backward from -- get_candles must stop
+    rather than guess, returning a short (possibly empty) result instead
+    of looping or crashing on an empty min()."""
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "status": "ok",
+        "values": [
+            {
+                "datetime": "2024-01-01 12:00:00",
+                "open": "101.0", "high": "99.0", "low": "95.0", "close": "100.5", "volume": "1300.0",
+            },
+        ],
+    }
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_get(url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> Mock:
+        calls.append(params)
+        return response
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", fake_get)
+    monkeypatch.setattr("data.providers.twelve_data.time.sleep", lambda seconds: None)
+
+    candles = provider.get_candles("EUR/USD", "1h", limit=1)
+
+    assert candles == []
+    assert len(calls) == 1  # no topup attempted -- nothing to anchor it on
+
+    def multi_record_response() -> Mock:
+        resp = Mock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "status": "ok",
+            "values": [
+                {
+                    "datetime": "2024-01-01 11:00:00",
+                    "open": "100.0", "high": "105.0", "low": "95.0", "close": "103.0", "volume": "1250.5",
+                },
+                {
+                    "datetime": "2024-01-01 12:00:00",
+                    "open": "101.0", "high": "99.0", "low": "95.0", "close": "100.5", "volume": "1300.0",
+                },
+            ],
+        }
+        return resp
+
+    calls_2: list[dict[str, Any]] = []
+
+    def fake_get_2(url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> Mock:
+        calls_2.append(params)
+        return multi_record_response()
+
+    monkeypatch.setattr("data.providers.twelve_data.httpx.get", fake_get_2)
+
+    # Here one record DOES survive, so topup should keep retrying (using
+    # that surviving candle's timestamp as the anchor) up to the bound,
+    # rather than stopping after one attempt.
+    candles = provider.get_candles("EUR/USD", "1h", limit=2)
+
+    assert len(candles) == 1
+    assert len(calls_2) == 1 + TwelveDataProvider.MAX_TOPUP_ATTEMPTS
