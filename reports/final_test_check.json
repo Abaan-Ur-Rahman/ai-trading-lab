@@ -1,0 +1,337 @@
+{
+  "run_at": "2026-10-05T19:23:59.404652+00:00",
+  "decision_rule": "Dollar features count as confirmed on test only if plus_combined has a higher mean test macro-F1 than base AND beats base on at least 8 of 10 seeds. Trading metrics are reported as signal-quality diagnostics only and are not part of the decision.",
+  "decision": "confirmed",
+  "macro_f1_mean_gap": 0.01533024256389066,
+  "seeds_beating_base": 10,
+  "configs": {
+    "base": {
+      "feature_columns": [
+        "log_return",
+        "ema_gap_pct",
+        "rsi",
+        "atr_pct",
+        "macd_hist_pct"
+      ],
+      "macro_f1_by_seed": [
+        0.36732983733070373,
+        0.36483981758104894,
+        0.3708696628792234,
+        0.36824271061526564,
+        0.36861170653076963,
+        0.3607343527738265,
+        0.36728461289423175,
+        0.3696511506716326,
+        0.37508768314734553,
+        0.36505079017336156
+      ],
+      "runs": [
+        {
+          "macro_f1": 0.36732983733070373,
+          "accuracy": 0.4899665551839465,
+          "per_class_f1": {
+            "SELL": 0.2273476112026359,
+            "HOLD": 0.6551070170685451,
+            "BUY": 0.21953488372093025
+          },
+          "cumulative_return": -0.9462984795327535,
+          "hit_rate": 0.33544303797468356,
+          "n_trades_taken": 632
+        },
+        {
+          "macro_f1": 0.36483981758104894,
+          "accuracy": 0.48963210702341137,
+          "per_class_f1": {
+            "SELL": 0.22148209825145712,
+            "HOLD": 0.6565711195240671,
+            "BUY": 0.21646623496762257
+          },
+          "cumulative_return": -0.8330819752806113,
+          "hit_rate": 0.3549920760697306,
+          "n_trades_taken": 631
+        },
+        {
+          "macro_f1": 0.3708696628792234,
+          "accuracy": 0.4926421404682274,
+          "per_class_f1": {
+            "SELL": 0.2337228714524207,
+            "HOLD": 0.6546043748312179,
+            "BUY": 0.2242817423540315
+          },
+          "cumulative_return": -0.9079267771780267,
+          "hit_rate": 0.3476190476190476,
+          "n_trades_taken": 630
+        },
+        {
+          "macro_f1": 0.36824271061526564,
+          "accuracy": 0.48929765886287624,
+          "per_class_f1": {
+            "SELL": 0.22660098522167488,
+            "HOLD": 0.6536373507057546,
+            "BUY": 0.22448979591836735
+          },
+          "cumulative_return": -1.0088069610073416,
+          "hit_rate": 0.336038961038961,
+          "n_trades_taken": 616
+        },
+        {
+          "macro_f1": 0.36861170653076963,
+          "accuracy": 0.49130434782608695,
+          "per_class_f1": {
+            "SELL": 0.22551440329218106,
+            "HOLD": 0.656021650879567,
+            "BUY": 0.22429906542056074
+          },
+          "cumulative_return": -0.9274731828118027,
+          "hit_rate": 0.3425324675324675,
+          "n_trades_taken": 616
+        },
+        {
+          "macro_f1": 0.3607343527738265,
+          "accuracy": 0.4872909698996655,
+          "per_class_f1": {
+            "SELL": 0.21546052631578946,
+            "HOLD": 0.6562162162162162,
+            "BUY": 0.21052631578947367
+          },
+          "cumulative_return": -1.0389501326827681,
+          "hit_rate": 0.34134615384615385,
+          "n_trades_taken": 624
+        },
+        {
+          "macro_f1": 0.36728461289423175,
+          "accuracy": 0.48963210702341137,
+          "per_class_f1": {
+            "SELL": 0.22350041084634348,
+            "HOLD": 0.6550976138828634,
+            "BUY": 0.22325581395348837
+          },
+          "cumulative_return": -0.8715495981686279,
+          "hit_rate": 0.3552188552188552,
+          "n_trades_taken": 594
+        },
+        {
+          "macro_f1": 0.3696511506716326,
+          "accuracy": 0.4926421404682274,
+          "per_class_f1": {
+            "SELL": 0.22899505766062603,
+            "HOLD": 0.6571119524067063,
+            "BUY": 0.22284644194756553
+          },
+          "cumulative_return": -1.0511748681404682,
+          "hit_rate": 0.3488372093023256,
+          "n_trades_taken": 645
+        },
+        {
+          "macro_f1": 0.37508768314734553,
+          "accuracy": 0.4956521739130435,
+          "per_class_f1": {
+            "SELL": 0.2315270935960591,
+            "HOLD": 0.6580016246953696,
+            "BUY": 0.23573433115060805
+          },
+          "cumulative_return": -0.9582357100712964,
+          "hit_rate": 0.34134615384615385,
+          "n_trades_taken": 624
+        },
+        {
+          "macro_f1": 0.36505079017336156,
+          "accuracy": 0.48595317725752507,
+          "per_class_f1": {
+            "SELL": 0.22546634225466342,
+            "HOLD": 0.6516058791507894,
+            "BUY": 0.21808014911463186
+          },
+          "cumulative_return": -1.0459804296971706,
+          "hit_rate": 0.34069400630914826,
+          "n_trades_taken": 634
+        }
+      ]
+    },
+    "plus_combined": {
+      "feature_columns": [
+        "log_return",
+        "ema_gap_pct",
+        "rsi",
+        "atr_pct",
+        "macd_hist_pct",
+        "eurusd_secondary_log_return",
+        "eurusd_ratio_log_return",
+        "eurusd_rolling_correlation",
+        "usdjpy_secondary_log_return",
+        "usdjpy_ratio_log_return",
+        "usdjpy_rolling_correlation"
+      ],
+      "macro_f1_by_seed": [
+        0.37968797319680686,
+        0.389827935378233,
+        0.38315501956163006,
+        0.3812133587438809,
+        0.3827571759292516,
+        0.3854021067302436,
+        0.3823873507919446,
+        0.37684314609860187,
+        0.3832147278776646,
+        0.3865159559280588
+      ],
+      "runs": [
+        {
+          "macro_f1": 0.37968797319680686,
+          "accuracy": 0.5414715719063545,
+          "per_class_f1": {
+            "SELL": 0.19776119402985073,
+            "HOLD": 0.7107731305449937,
+            "BUY": 0.23052959501557632
+          },
+          "cumulative_return": -0.35082397054614095,
+          "hit_rate": 0.34408602150537637,
+          "n_trades_taken": 186
+        },
+        {
+          "macro_f1": 0.389827935378233,
+          "accuracy": 0.5474916387959866,
+          "per_class_f1": {
+            "SELL": 0.20923656927426956,
+            "HOLD": 0.7135601828339259,
+            "BUY": 0.24668705402650357
+          },
+          "cumulative_return": -0.3981651763756032,
+          "hit_rate": 0.30158730158730157,
+          "n_trades_taken": 189
+        },
+        {
+          "macro_f1": 0.38315501956163006,
+          "accuracy": 0.5431438127090301,
+          "per_class_f1": {
+            "SELL": 0.20637898686679174,
+            "HOLD": 0.7115286947689182,
+            "BUY": 0.23155737704918034
+          },
+          "cumulative_return": -0.38910268228642614,
+          "hit_rate": 0.31862745098039214,
+          "n_trades_taken": 204
+        },
+        {
+          "macro_f1": 0.3812133587438809,
+          "accuracy": 0.5414715719063545,
+          "per_class_f1": {
+            "SELL": 0.21121495327102804,
+            "HOLD": 0.7092846270928462,
+            "BUY": 0.2231404958677686
+          },
+          "cumulative_return": -0.4409110564481293,
+          "hit_rate": 0.31343283582089554,
+          "n_trades_taken": 201
+        },
+        {
+          "macro_f1": 0.3827571759292516,
+          "accuracy": 0.5451505016722408,
+          "per_class_f1": {
+            "SELL": 0.2049808429118774,
+            "HOLD": 0.7133822413356944,
+            "BUY": 0.2299084435401831
+          },
+          "cumulative_return": -0.40784631793117365,
+          "hit_rate": 0.29891304347826086,
+          "n_trades_taken": 184
+        },
+        {
+          "macro_f1": 0.3854021067302436,
+          "accuracy": 0.545484949832776,
+          "per_class_f1": {
+            "SELL": 0.20915032679738563,
+            "HOLD": 0.7133434804667681,
+            "BUY": 0.23371251292657705
+          },
+          "cumulative_return": -0.3108052019329478,
+          "hit_rate": 0.36683417085427134,
+          "n_trades_taken": 199
+        },
+        {
+          "macro_f1": 0.3823873507919446,
+          "accuracy": 0.539799331103679,
+          "per_class_f1": {
+            "SELL": 0.20898258478460127,
+            "HOLD": 0.7074102368220015,
+            "BUY": 0.23076923076923078
+          },
+          "cumulative_return": -0.499267764105612,
+          "hit_rate": 0.29901960784313725,
+          "n_trades_taken": 204
+        },
+        {
+          "macro_f1": 0.37684314609860187,
+          "accuracy": 0.5421404682274248,
+          "per_class_f1": {
+            "SELL": 0.20075046904315197,
+            "HOLD": 0.7135627530364372,
+            "BUY": 0.21621621621621623
+          },
+          "cumulative_return": -0.4381505729700754,
+          "hit_rate": 0.30612244897959184,
+          "n_trades_taken": 196
+        },
+        {
+          "macro_f1": 0.3832147278776646,
+          "accuracy": 0.5444816053511705,
+          "per_class_f1": {
+            "SELL": 0.2111215834118756,
+            "HOLD": 0.7133434804667681,
+            "BUY": 0.22517911975435004
+          },
+          "cumulative_return": -0.4068888347833717,
+          "hit_rate": 0.3163265306122449,
+          "n_trades_taken": 196
+        },
+        {
+          "macro_f1": 0.3865159559280588,
+          "accuracy": 0.5444816053511705,
+          "per_class_f1": {
+            "SELL": 0.20772058823529413,
+            "HOLD": 0.7117437722419929,
+            "BUY": 0.24008350730688935
+          },
+          "cumulative_return": -0.3812315852719731,
+          "hit_rate": 0.3105263157894737,
+          "n_trades_taken": 190
+        }
+      ]
+    }
+  },
+  "train_rows": [
+    "2023-11-15 11:00:00+00:00",
+    "2026-05-29 20:00:00+00:00",
+    16967
+  ],
+  "test_rows": [
+    "2026-05-30 02:00:00+00:00",
+    "2026-10-01 15:00:00+00:00",
+    2990
+  ],
+  "rf_params": {
+    "n_estimators": 200,
+    "max_depth": 20,
+    "min_samples_leaf": 5,
+    "class_weight": "balanced"
+  },
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "horizon": 5,
+  "threshold": 0.005,
+  "library_versions": {
+    "python_version": "3.13.0",
+    "pandas_version": "3.0.5",
+    "numpy_version": "2.5.2",
+    "sklearn_version": "1.9.1"
+  }
+}
