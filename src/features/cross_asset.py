@@ -65,6 +65,25 @@ def build_cross_asset_features(
 
     rolling_correlation = primary_log_return.rolling(window=corr_window).corr(secondary_log_return)
 
+    # A window where either instrument did not move at all (common for the
+    # secondary: forward-filled through its own data gaps while the primary
+    # keeps trading) has no defined correlation. pandas' rolling corr leaves
+    # ~1e-11 of floating-point residue in such windows, so whether it returns
+    # NaN or an arbitrary value depends on the platform's floating-point
+    # rounding -- the same data produced different datasets on Linux and Windows.
+    # Flat windows are set explicitly to 0.0 ("no measurable co-movement"),
+    # which is platform-independent and keeps the dataset contiguous (the
+    # positional purge in ml.dataset.chronological_split assumes no internal
+    # gaps). Genuine 1h return std is orders of magnitude above the tolerance.
+    flat_std_tolerance = 1e-9
+    primary_flat = primary_log_return.rolling(window=corr_window).std() < flat_std_tolerance
+    secondary_flat = secondary_log_return.rolling(window=corr_window).std() < flat_std_tolerance
+    has_full_window = primary_log_return.rolling(window=corr_window).count().eq(corr_window) & (
+        secondary_log_return.rolling(window=corr_window).count().eq(corr_window)
+    )
+    rolling_correlation = rolling_correlation.where(~(has_full_window & (primary_flat | secondary_flat)), 0.0)
+    rolling_correlation = rolling_correlation.clip(-1.0, 1.0)
+
     return pd.DataFrame(
         {
             "secondary_log_return": secondary_log_return,
