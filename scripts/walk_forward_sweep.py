@@ -77,6 +77,29 @@ def load_ohlcv(path: Path) -> pd.DataFrame:
     return raw.set_index("timestamp")
 
 
+def build_combined_dataset(
+    base_ds: pd.DataFrame,
+    primary: pd.DataFrame,
+    secondary_frames: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, list[str]]:
+    """Base dataset plus every secondary's cross-asset features, prefixed by name.
+
+    Each secondary's features are computed from the full primary close (same
+    as build_feature_dataset does) and joined onto the base dataset's rows;
+    only rows complete in every feature are kept. Returns the dataset and the
+    added column names (e.g. eurusd_rolling_correlation, usdjpy_...).
+    """
+    combined = base_ds.copy()
+    columns: list[str] = []
+    for name, frame in secondary_frames.items():
+        features = build_cross_asset_features(
+            primary["close"], frame["close"], corr_window=CORR_WINDOW,
+        ).add_prefix(f"{name.lower()}_")
+        combined = combined.join(features)
+        columns += list(features.columns)
+    return combined.dropna(subset=columns), columns
+
+
 def fold_bounds(n_dev: int, n_folds: int, initial_train_pct: float) -> list[tuple[int, int]]:
     """(val_start, val_end) positions for each expanding-window fold."""
     first_val_start = int(n_dev * initial_train_pct)
@@ -133,18 +156,7 @@ def main() -> None:
     if args.combine:
         if len(secondary_frames) < 2:
             parser.error("--combine needs at least two --secondary instruments")
-        # Each secondary's features are computed from the full primary close
-        # (same as build_feature_dataset does) and joined onto the base
-        # dataset's rows; only rows complete in every feature are kept.
-        combined = base_ds.copy()
-        combined_columns: list[str] = []
-        for name, frame in secondary_frames.items():
-            features = build_cross_asset_features(
-                primary["close"], frame["close"], corr_window=CORR_WINDOW,
-            ).add_prefix(f"{name.lower()}_")
-            combined = combined.join(features)
-            combined_columns += list(features.columns)
-        combined = combined.dropna(subset=combined_columns)
+        combined, combined_columns = build_combined_dataset(base_ds, primary, secondary_frames)
         sets.append(("plus_combined", FEATURE_COLUMNS + combined_columns, combined))
 
     if args.dollar_index:
