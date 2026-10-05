@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from features.cross_asset import align_secondary_close, build_cross_asset_features
+from features.cross_asset import align_secondary_close, build_cross_asset_features, synthetic_dollar_index
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -76,3 +76,38 @@ def test_rejects_too_small_window() -> None:
     series = _random_walk(30, seed=8, start=1.0)
     with pytest.raises(ValueError):
         build_cross_asset_features(series, series, corr_window=1)
+
+
+def test_dollar_index_rises_when_dollar_strengthens_against_both() -> None:
+    idx = _index(3)
+    eurusd = pd.Series([1.10, 1.09, 1.08], index=idx)  # dollar up vs EUR
+    usdjpy = pd.Series([150.0, 151.0, 152.0], index=idx)  # dollar up vs JPY
+
+    index = synthetic_dollar_index(eurusd, usdjpy)
+
+    assert index.is_monotonic_increasing
+    assert index.name == "close"
+
+
+def test_dollar_index_is_equal_weighted_geometric_mean_of_dollar_sides() -> None:
+    idx = _index(2)
+    eurusd = pd.Series([1.0, 1.0], index=idx)
+    usdjpy = pd.Series([100.0, 121.0], index=idx)
+
+    index = synthetic_dollar_index(eurusd, usdjpy)
+
+    # Only USD/JPY moved, by +21%; equal weighting passes on sqrt(1.21) = 1.1.
+    assert index.iloc[1] / index.iloc[0] == pytest.approx(1.1)
+
+
+def test_dollar_index_aligns_mismatched_timestamps_causally() -> None:
+    idx = _index(4)
+    eurusd = pd.Series([1.0, 1.0, 1.0], index=idx[[0, 1, 3]])
+    usdjpy = pd.Series([100.0, 144.0], index=idx[[1, 2]])
+
+    index = synthetic_dollar_index(eurusd, usdjpy)
+
+    # idx[0] has no USD/JPY yet -> dropped; idx[3] carries USD/JPY's last value.
+    assert list(index.index) == list(idx[1:])
+    assert index.loc[idx[3]] == pytest.approx(index.loc[idx[2]])
+    assert index.loc[idx[2]] / index.loc[idx[1]] == pytest.approx(1.2)

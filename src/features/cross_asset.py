@@ -30,6 +30,38 @@ def align_secondary_close(
     return secondary_close.reindex(primary_index, method="ffill")
 
 
+def synthetic_dollar_index(
+    eurusd_close: pd.Series,
+    usdjpy_close: pd.Series,
+) -> pd.Series:
+    """Equal-weighted dollar-strength index from EUR/USD and USD/JPY.
+
+    Both pairs are quoted differently: the dollar strengthening pushes
+    EUR/USD down but USD/JPY up. So the index is built from the dollar side
+    of each, in log space:
+
+        log(index) = 0.5 * (log(USD/JPY) - log(EUR/USD))
+
+    It rises when the dollar strengthens against both currencies. Equal
+    weights are deliberate: with only two pairs, the real DXY's weights
+    (EUR ~58%, JPY ~14%) would make this nearly identical to EUR/USD alone,
+    defeating the point of averaging out each pair's own noise. Only the
+    index's moves matter (every feature built from it uses log returns or
+    ratios of returns), so its absolute level is arbitrary.
+
+    The two series are aligned onto the union of their timestamps by
+    forward-filling each one's own past values (causal, never looks ahead).
+    Leading timestamps before both series have started are dropped.
+    """
+    union_index = eurusd_close.index.union(usdjpy_close.index).sort_values()
+    eurusd = eurusd_close.reindex(union_index, method="ffill")
+    usdjpy = usdjpy_close.reindex(union_index, method="ffill")
+
+    log_index = 0.5 * (np.log(usdjpy) - np.log(eurusd))
+
+    return np.exp(log_index).dropna().rename("close")
+
+
 def build_cross_asset_features(
     primary_close: pd.Series,
     secondary_close: pd.Series,

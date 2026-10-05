@@ -26,9 +26,18 @@ How it works:
 Read the result as: a feature set is a credible improvement only if it beats
 `base` in most folds, not just on average.
 
+Optional combined sets (both need 2+ secondaries):
+- --combine adds `plus_combined`: every secondary's 3 cross-asset features
+  side by side, prefixed by name (e.g. eurusd_rolling_correlation).
+- --dollar-index adds `plus_dollar_index`: the 3 cross-asset features
+  computed against an equal-weighted synthetic dollar index built from the
+  EURUSD and USDJPY secondaries (see features.cross_asset.synthetic_dollar_index).
+
 Usage:
     python scripts/walk_forward_sweep.py
     python scripts/walk_forward_sweep.py --folds 5 --seeds 5 \
+        --secondary EURUSD=data/raw/EURUSD_1h.csv --secondary USDJPY=data/raw/USDJPY_1h.csv
+    python scripts/walk_forward_sweep.py --folds 5 --seeds 5 --combine --dollar-index \
         --secondary EURUSD=data/raw/EURUSD_1h.csv --secondary USDJPY=data/raw/USDJPY_1h.csv
 """
 
@@ -45,6 +54,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from features.cross_asset import build_cross_asset_features, synthetic_dollar_index
 from features.pipeline import build_feature_dataset
 from features.scaling import apply_scaler, fit_scaler
 from ml.dataset import FEATURE_COLUMNS, separate_features_and_target
@@ -90,6 +100,10 @@ def main() -> None:
     parser.add_argument("--seeds", type=int, default=5)
     parser.add_argument("--initial-train-pct", type=float, default=0.5)
     parser.add_argument("--jobs", type=int, default=-1, help="parallel workers (-1 = all cores)")
+    parser.add_argument("--combine", action="store_true",
+                        help="also test all secondaries' cross-asset features together (plus_combined)")
+    parser.add_argument("--dollar-index", action="store_true",
+                        help="also test a synthetic dollar index from the EURUSD and USDJPY secondaries")
     parser.add_argument("--primary", default=str(PROJECT_ROOT / "data/raw/XAUUSD_1h.csv"))
     parser.add_argument(
         "--secondary", action="append", default=[],
@@ -108,12 +122,40 @@ def main() -> None:
         ("base", FEATURE_COLUMNS, base_ds),
         ("plus_momentum", FEATURE_COLUMNS + MOMENTUM_COLUMNS, base_ds),
     ]
-    for name, path in secondaries.items():
+    secondary_frames = {name: load_ohlcv(Path(path)) for name, path in secondaries.items()}
+    for name, frame in secondary_frames.items():
         ds = build_feature_dataset(
             primary, horizon=HORIZON, threshold=THRESHOLD,
-            secondary_dataframe=load_ohlcv(Path(path)), cross_asset_corr_window=CORR_WINDOW,
+            secondary_dataframe=frame, cross_asset_corr_window=CORR_WINDOW,
         )
         sets.append((f"plus_{name.lower()}", FEATURE_COLUMNS + CROSS_ASSET_COLUMNS, ds))
+
+    if args.combine:
+        if len(secondary_frames) < 2:
+            parser.error("--combine needs at least two --secondary instruments")
+        # Each secondary's features are computed from the full primary close
+        # (same as build_feature_dataset does) and joined onto the base
+        # dataset's rows; only rows complete in every feature are kept.
+        combined = base_ds.copy()
+        combined_columns: list[str] = []
+        for name, frame in secondary_frames.items():
+            features = build_cross_asset_features(
+                primary["close"], frame["close"], corr_window=CORR_WINDOW,
+            ).add_prefix(f"{name.lower()}_")
+            combined = combined.join(features)
+            combined_columns += list(features.columns)
+        combined = combined.dropna(subset=combined_columns)
+        sets.append(("plus_combined", FEATURE_COLUMNS + combined_columns, combined))
+
+    if args.dollar_index:
+        if not {"EURUSD", "USDJPY"} <= set(secondary_frames):
+            parser.error("--dollar-index needs secondaries named EURUSD and USDJPY")
+        dollar = synthetic_dollar_index(secondary_frames["EURUSD"]["close"], secondary_frames["USDJPY"]["close"])
+        ds = build_feature_dataset(
+            primary, horizon=HORIZON, threshold=THRESHOLD,
+            secondary_dataframe=dollar.to_frame(), cross_asset_corr_window=CORR_WINDOW,
+        )
+        sets.append(("plus_dollar_index", FEATURE_COLUMNS + CROSS_ASSET_COLUMNS, ds))
 
     common = sets[0][2].index
     for _, _, ds in sets[1:]:
@@ -154,11 +196,11 @@ def main() -> None:
     per_fold = per_fold[[name for name, _, _ in sets]]
 
     print("\n=== Mean validation macro-F1 per fold (averaged over seeds; test untouched) ===")
-    header = f"{'fold':<6}{'validation period':<27}" + "".join(f"{name:>16}" for name, _, _ in sets)
+    header = f"{'fold':<6}{'validation period':<27}" + "".join(f"{name:>19}" for name, _, _ in sets)
     print(header)
     for fold, (vs, ve) in enumerate(bounds):
         period = f"{dev_index[vs]:%Y-%m-%d} to {dev_index[ve - 1]:%Y-%m-%d}"
-        row = "".join(f"{per_fold.loc[fold, name]:>16.4f}" for name, _, _ in sets)
+        row = "".join(f"{per_fold.loc[fold, name]:>19.4f}" for name, _, _ in sets)
         print(f"{fold + 1:<6}{period:<27}{row}")
 
     print("\n=== Versus base, across folds ===")
