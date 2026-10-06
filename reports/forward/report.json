@@ -1,0 +1,149 @@
+{
+  "generated_at": "2026-10-06T05:21:43.041753+00:00",
+  "bars_logged": 104,
+  "bars_with_outcomes": 99,
+  "period": [
+    "2026-10-01 21:00:00+00:00",
+    "2026-10-05 23:00:00+00:00"
+  ],
+  "macro_f1": 0.3353846153846154,
+  "always_hold_macro_f1": 0.3,
+  "rules_registered_on": "2026-10-06",
+  "rules": {
+    "A_current": {
+      "rules": {
+        "initial_capital": 10000.0,
+        "position_fraction": 1.0,
+        "min_confidence": 0.5,
+        "holding_bars": 5,
+        "cost_pct_per_side": 0.0005,
+        "allow_short": true
+      },
+      "metrics": {
+        "initial_capital": 10000.0,
+        "final_equity": 9857.620686212353,
+        "total_return": -0.014237931378764723,
+        "annualized_return": -0.7049037951357602,
+        "annualized_volatility": 0.1015264386464361,
+        "sharpe_ratio": -12.086457179157447,
+        "max_drawdown": 0.015542638667079434,
+        "n_trades": 3,
+        "years": 0.011749942961441934,
+        "n_long": 2,
+        "n_short": 1,
+        "win_rate": 0.0,
+        "avg_trade_return": -0.004763289555650533,
+        "profit_factor": 0.0,
+        "total_costs": 29.86089411258502,
+        "exposure": 0.14423076923076922
+      },
+      "verdict": "too early"
+    },
+    "B_confident": {
+      "rules": {
+        "initial_capital": 10000.0,
+        "position_fraction": 1.0,
+        "min_confidence": 0.55,
+        "holding_bars": 5,
+        "cost_pct_per_side": 0.0005,
+        "allow_short": true
+      },
+      "metrics": {
+        "initial_capital": 10000.0,
+        "final_equity": 10000.0,
+        "total_return": 0.0,
+        "annualized_return": 0.0,
+        "annualized_volatility": 0.0,
+        "sharpe_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "n_trades": 0,
+        "years": 0.011749942961441934,
+        "n_long": 0,
+        "n_short": 0,
+        "win_rate": 0.0,
+        "avg_trade_return": 0.0,
+        "profit_factor": NaN,
+        "total_costs": 0.0,
+        "exposure": 0.0
+      },
+      "verdict": "too early"
+    },
+    "C_long_only": {
+      "rules": {
+        "initial_capital": 10000.0,
+        "position_fraction": 1.0,
+        "min_confidence": 0.5,
+        "holding_bars": 5,
+        "cost_pct_per_side": 0.0005,
+        "allow_short": false
+      },
+      "metrics": {
+        "initial_capital": 10000.0,
+        "final_equity": 9928.659925958973,
+        "total_return": -0.007134007404102749,
+        "annualized_return": -0.45628419421993893,
+        "annualized_volatility": 0.06839821544215748,
+        "sharpe_ratio": -8.960801608797393,
+        "max_drawdown": 0.009607976673554893,
+        "n_trades": 2,
+        "years": 0.011749942961441934,
+        "n_long": 2,
+        "n_short": 0,
+        "win_rate": 0.0,
+        "avg_trade_return": -0.0035674505503479267,
+        "profit_factor": 0.0,
+        "total_costs": 19.97304111586631,
+        "exposure": 0.09615384615384616
+      },
+      "verdict": "too early"
+    },
+    "D_longer_hold": {
+      "rules": {
+        "initial_capital": 10000.0,
+        "position_fraction": 1.0,
+        "min_confidence": 0.5,
+        "holding_bars": 24,
+        "cost_pct_per_side": 0.0005,
+        "allow_short": true
+      },
+      "metrics": {
+        "initial_capital": 10000.0,
+        "final_equity": 10113.341022496648,
+        "total_return": 0.011334102249664912,
+        "annualized_return": 1.6095651474366917,
+        "annualized_volatility": 0.14527568901026053,
+        "sharpe_ratio": 6.738799720279458,
+        "max_drawdown": 0.008442492533724241,
+        "n_trades": 1,
+        "years": 0.011749942961441934,
+        "n_long": 0,
+        "n_short": 1,
+        "win_rate": 1.0,
+        "avg_trade_return": 0.011334102249664873,
+        "profit_factor": Infinity,
+        "total_costs": 9.938360308597378,
+        "exposure": 0.23076923076923078
+      },
+      "verdict": "too early"
+    }
+  },
+  "buy_and_hold": {
+    "initial_capital": 10000.0,
+    "final_equity": 9860.121341532511,
+    "total_return": -0.013987865846748937,
+    "annualized_return": -0.6984643196704001,
+    "annualized_volatility": 0.2039503228541029,
+    "sharpe_ratio": -5.833808015585684,
+    "max_drawdown": 0.022416249999956308,
+    "n_trades": 0,
+    "years": 0.011749942961441934,
+    "n_long": 0,
+    "n_short": 0,
+    "win_rate": 0.0,
+    "avg_trade_return": 0.0,
+    "profit_factor": NaN,
+    "total_costs": 0.0,
+    "exposure": 0.0
+  },
+  "verdict_ready": false
+}
