@@ -1,0 +1,34 @@
+name: Tests
+
+# Runs the full unit-test suite on every push and pull request.
+# Both Linux and Windows: this project has already hit one bug where the same
+# data produced different results on the two (cross-asset rolling correlation
+# over flat windows), so both platforms are checked.
+# The tests mock all network calls, so no API key or market data is needed.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.13 and locked dependencies
+        run: |
+          uv python install 3.13
+          uv sync --all-extras --locked
+
+      - name: Run tests
+        run: uv run pytest tests/ -q
