@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from features.feature_builder import build_features, multi_period_log_return, range_position
+from features.feature_builder import BUILD_FEATURES_COLUMNS, build_features, multi_period_log_return, range_position
 
 
 @pytest.fixture
@@ -71,6 +71,24 @@ def test_build_features_returns_expected_columns(
         "macd_hist_pct",
         "range_position",
     }
+
+
+def test_build_features_columns_constant_matches_output(
+    sample_ohlc_dataframe: pd.DataFrame,
+) -> None:
+    """BUILD_FEATURES_COLUMNS is what persistence trusts; it must match reality."""
+    result = build_features(
+        sample_ohlc_dataframe,
+        ema_fast=3,
+        ema_slow=6,
+        rsi_length=6,
+        atr_length=3,
+        macd_fast=3,
+        macd_slow=6,
+        macd_signal=2,
+    )
+
+    assert list(result.columns) == BUILD_FEATURES_COLUMNS
 
 
 def test_build_features_preserves_row_count(

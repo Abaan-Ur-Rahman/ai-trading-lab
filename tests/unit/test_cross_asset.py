@@ -6,7 +6,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from features.cross_asset import align_secondary_close, build_cross_asset_features, synthetic_dollar_index
+from features.cross_asset import (
+    CROSS_ASSET_COLUMNS,
+    align_secondary_close,
+    build_cross_asset_features,
+    build_prefixed_cross_asset_features,
+    cross_asset_column_names,
+    synthetic_dollar_index,
+)
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -111,3 +118,21 @@ def test_dollar_index_aligns_mismatched_timestamps_causally() -> None:
     assert list(index.index) == list(idx[1:])
     assert index.loc[idx[3]] == pytest.approx(index.loc[idx[2]])
     assert index.loc[idx[2]] / index.loc[idx[1]] == pytest.approx(1.2)
+
+
+def test_prefixed_features_match_individual_builds_with_prefixes() -> None:
+    primary = _random_walk(60, seed=11, start=2000.0)
+    eurusd = _random_walk(60, seed=12, start=1.1)
+    usdjpy = _random_walk(60, seed=13, start=150.0)
+
+    combined = build_prefixed_cross_asset_features(primary, {"EURUSD": eurusd, "USDJPY": usdjpy}, corr_window=10)
+
+    assert list(combined.columns) == cross_asset_column_names(["EURUSD", "USDJPY"])
+    assert list(combined.columns)[:3] == [f"eurusd_{c}" for c in CROSS_ASSET_COLUMNS]
+    expected = build_cross_asset_features(primary, usdjpy, corr_window=10).add_prefix("usdjpy_")
+    pd.testing.assert_frame_equal(combined[expected.columns], expected)
+
+
+def test_prefixed_features_require_a_secondary() -> None:
+    with pytest.raises(ValueError):
+        build_prefixed_cross_asset_features(_random_walk(30, seed=14, start=1.0), {})

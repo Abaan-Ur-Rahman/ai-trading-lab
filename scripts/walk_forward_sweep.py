@@ -54,7 +54,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from features.cross_asset import build_cross_asset_features, synthetic_dollar_index
+from features.cross_asset import CROSS_ASSET_COLUMNS, build_prefixed_cross_asset_features, synthetic_dollar_index
 from features.pipeline import build_feature_dataset
 from features.scaling import apply_scaler, fit_scaler
 from ml.dataset import FEATURE_COLUMNS, separate_features_and_target
@@ -67,7 +67,6 @@ TRAIN_PCT = 0.70
 VAL_PCT = 0.15
 RF_PARAMS = {"n_estimators": 200, "max_depth": 20, "min_samples_leaf": 5, "class_weight": "balanced"}
 MOMENTUM_COLUMNS = ["return_3", "return_10", "return_20"]
-CROSS_ASSET_COLUMNS = ["secondary_log_return", "ratio_log_return", "rolling_correlation"]
 CORR_WINDOW = 20
 
 
@@ -84,20 +83,19 @@ def build_combined_dataset(
 ) -> tuple[pd.DataFrame, list[str]]:
     """Base dataset plus every secondary's cross-asset features, prefixed by name.
 
-    Each secondary's features are computed from the full primary close (same
-    as build_feature_dataset does) and joined onto the base dataset's rows;
-    only rows complete in every feature are kept. Returns the dataset and the
-    added column names (e.g. eurusd_rolling_correlation, usdjpy_...).
+    Features come from features.cross_asset.build_prefixed_cross_asset_features
+    (the same function live inference uses), computed from the full primary
+    close and joined onto the base dataset's rows; only rows complete in every
+    feature are kept. Returns the dataset and the added column names
+    (e.g. eurusd_rolling_correlation, usdjpy_...).
     """
-    combined = base_ds.copy()
-    columns: list[str] = []
-    for name, frame in secondary_frames.items():
-        features = build_cross_asset_features(
-            primary["close"], frame["close"], corr_window=CORR_WINDOW,
-        ).add_prefix(f"{name.lower()}_")
-        combined = combined.join(features)
-        columns += list(features.columns)
-    return combined.dropna(subset=columns), columns
+    features = build_prefixed_cross_asset_features(
+        primary["close"],
+        {name: frame["close"] for name, frame in secondary_frames.items()},
+        corr_window=CORR_WINDOW,
+    )
+    columns = list(features.columns)
+    return base_ds.join(features).dropna(subset=columns), columns
 
 
 def fold_bounds(n_dev: int, n_folds: int, initial_train_pct: float) -> list[tuple[int, int]]:

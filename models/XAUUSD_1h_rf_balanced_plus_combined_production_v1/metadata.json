@@ -1,0 +1,78 @@
+{
+  "model_type": "RandomForestModel",
+  "hyperparameters": {
+    "n_estimators": 200,
+    "max_depth": 20,
+    "min_samples_leaf": 5,
+    "class_weight": "balanced",
+    "random_state": 42
+  },
+  "feature_columns": [
+    "log_return",
+    "ema_gap_pct",
+    "rsi",
+    "atr_pct",
+    "macd_hist_pct",
+    "eurusd_secondary_log_return",
+    "eurusd_ratio_log_return",
+    "eurusd_rolling_correlation",
+    "usdjpy_secondary_log_return",
+    "usdjpy_ratio_log_return",
+    "usdjpy_rolling_correlation"
+  ],
+  "random_state": 42,
+  "train_pct": 1.0,
+  "val_pct": 0.0,
+  "horizon": 5,
+  "threshold": 0.005,
+  "symbol": "XAU/USD",
+  "timeframe": "1h",
+  "train_start": "2023-11-15 11:00:00+00:00",
+  "train_end": "2026-10-01 15:00:00+00:00",
+  "val_start": "n/a: production fit on all data; see evaluation_metrics for the validation evidence",
+  "val_end": "n/a: production fit on all data; see evaluation_metrics for the validation evidence",
+  "test_start": "n/a: production fit on all data; see evaluation_metrics for the validation evidence",
+  "test_end": "n/a: production fit on all data; see evaluation_metrics for the validation evidence",
+  "class_distribution": {
+    "SELL": 2073,
+    "HOLD": 15440,
+    "BUY": 2449
+  },
+  "python_version": "3.13.0",
+  "pandas_version": "3.0.5",
+  "numpy_version": "2.5.2",
+  "sklearn_version": "1.9.1",
+  "evaluation_metrics": {
+    "selection": "walk_forward_sweep.py, 5 expanding-window periods 2025-04-28 to 2026-05-29: plus_combined beat base in 5/5 periods, mean macro-F1 gap +0.0218",
+    "final_test_check": {
+      "decision": "confirmed",
+      "decision_rule": "Dollar features count as confirmed on test only if plus_combined has a higher mean test macro-F1 than base AND beats base on at least 8 of 10 seeds. Trading metrics are reported as signal-quality diagnostics only and are not part of the decision.",
+      "macro_f1_mean_gap": 0.01533024256389066,
+      "seeds_beating_base": 10,
+      "test_rows": [
+        "2026-05-30 02:00:00+00:00",
+        "2026-10-01 15:00:00+00:00",
+        2990
+      ],
+      "source": "reports/final_test_check.json"
+    },
+    "feature_importances": {
+      "log_return": 0.07675678285473872,
+      "ema_gap_pct": 0.0967000354833665,
+      "rsi": 0.08742206746869537,
+      "atr_pct": 0.15265250308715472,
+      "macd_hist_pct": 0.09681395968179034,
+      "eurusd_secondary_log_return": 0.07538373257838057,
+      "eurusd_ratio_log_return": 0.08118174998699951,
+      "eurusd_rolling_correlation": 0.0909058116267902,
+      "usdjpy_secondary_log_return": 0.07461884621726893,
+      "usdjpy_ratio_log_return": 0.07384566156955359,
+      "usdjpy_rolling_correlation": 0.09371884944526156
+    }
+  },
+  "secondary_symbols": {
+    "EURUSD": "EUR/USD",
+    "USDJPY": "USD/JPY"
+  },
+  "cross_asset_corr_window": 20
+}

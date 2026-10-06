@@ -118,3 +118,96 @@ def test_predict_from_ohlcv_forwards_range_lookback(
         predict_from_ohlcv(ohlcv_with_enough_history, model, scaler, range_lookback=7)
 
     assert mock_build_features.call_args.kwargs["range_lookback"] == 7
+
+
+def _timestamped(ohlcv: pd.DataFrame, end: str = "2026-01-10 00:00") -> pd.DataFrame:
+    frame = ohlcv.copy()
+    frame.index = pd.date_range(end=end, periods=len(frame), freq="h", tz="UTC")
+    return frame
+
+
+CROSS_ASSET_COLUMNS_EURUSD = FEATURE_COLUMNS + [
+    "eurusd_secondary_log_return",
+    "eurusd_ratio_log_return",
+    "eurusd_rolling_correlation",
+]
+
+
+@pytest.fixture
+def cross_asset_model_and_scaler():
+    rng = np.random.default_rng(5)
+    X = pd.DataFrame(rng.normal(size=(60, len(CROSS_ASSET_COLUMNS_EURUSD))), columns=CROSS_ASSET_COLUMNS_EURUSD)
+    y = pd.Series([-1] * 20 + [0] * 20 + [1] * 20, name="label")
+    scaler = fit_scaler(X)
+    model = LogisticRegressionModel(random_state=1)
+    model.fit(apply_scaler(scaler, X), y)
+    return model, scaler
+
+
+@pytest.fixture
+def eurusd_ohlcv() -> pd.DataFrame:
+    rng = np.random.default_rng(9)
+    closes = 1.1 * np.exp(np.cumsum(rng.normal(0, 0.001, 80)))
+    return pd.DataFrame({"open": closes, "high": closes, "low": closes, "close": closes})
+
+
+def test_predict_with_secondary_uses_cross_asset_features(
+    ohlcv_with_enough_history, eurusd_ohlcv, cross_asset_model_and_scaler
+) -> None:
+    model, scaler = cross_asset_model_and_scaler
+    gold, eurusd = _timestamped(ohlcv_with_enough_history), _timestamped(eurusd_ohlcv)
+
+    result = predict_from_ohlcv(
+        gold, model, scaler,
+        feature_columns=CROSS_ASSET_COLUMNS_EURUSD,
+        secondary_ohlcv={"EURUSD": eurusd},
+    )
+
+    # Same prediction as building the latest row by hand.
+    from features.cross_asset import build_prefixed_cross_asset_features
+
+    features = pd.concat(
+        [real_build_features(gold), build_prefixed_cross_asset_features(gold["close"], {"EURUSD": eurusd["close"]})],
+        axis=1,
+    )
+    expected = model.predict_proba(apply_scaler(scaler, features.iloc[[-1]][CROSS_ASSET_COLUMNS_EURUSD])).iloc[0]
+    pd.testing.assert_series_equal(result, expected)
+
+
+def test_predict_requires_secondary_for_cross_asset_columns(
+    ohlcv_with_enough_history, cross_asset_model_and_scaler
+) -> None:
+    model, scaler = cross_asset_model_and_scaler
+
+    with pytest.raises(ValueError, match="secondary_ohlcv"):
+        predict_from_ohlcv(
+            _timestamped(ohlcv_with_enough_history), model, scaler, feature_columns=CROSS_ASSET_COLUMNS_EURUSD,
+        )
+
+
+def test_predict_rejects_stale_secondary(
+    ohlcv_with_enough_history, eurusd_ohlcv, cross_asset_model_and_scaler
+) -> None:
+    model, scaler = cross_asset_model_and_scaler
+    gold = _timestamped(ohlcv_with_enough_history, end="2026-01-10 00:00")
+    stale_eurusd = _timestamped(eurusd_ohlcv, end="2026-01-08 00:00")  # 48h behind
+
+    with pytest.raises(ValueError, match="EURUSD"):
+        predict_from_ohlcv(
+            gold, model, scaler,
+            feature_columns=CROSS_ASSET_COLUMNS_EURUSD,
+            secondary_ohlcv={"EURUSD": stale_eurusd},
+        )
+
+
+def test_predict_with_secondary_requires_datetime_index(
+    ohlcv_with_enough_history, eurusd_ohlcv, cross_asset_model_and_scaler
+) -> None:
+    model, scaler = cross_asset_model_and_scaler
+
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        predict_from_ohlcv(
+            ohlcv_with_enough_history, model, scaler,
+            feature_columns=CROSS_ASSET_COLUMNS_EURUSD,
+            secondary_ohlcv={"EURUSD": eurusd_ohlcv},
+        )

@@ -1,0 +1,28 @@
+{
+  "mean": {
+    "log_return": 3.747022039098205e-05,
+    "ema_gap_pct": 0.00025817493115130766,
+    "rsi": 52.109621438403636,
+    "atr_pct": 0.00292272143029729,
+    "macd_hist_pct": -5.737594157115799e-07,
+    "eurusd_secondary_log_return": 1.697796856287861e-06,
+    "eurusd_ratio_log_return": 3.577242353469335e-05,
+    "eurusd_rolling_correlation": 0.3015443121203247,
+    "usdjpy_secondary_log_return": 2.3471899127077947e-06,
+    "usdjpy_ratio_log_return": 3.51230304782729e-05,
+    "usdjpy_rolling_correlation": -0.2576079092151855
+  },
+  "std": {
+    "log_return": 0.0025252197103026426,
+    "ema_gap_pct": 0.0028545955272266063,
+    "rsi": 13.419104590454742,
+    "atr_pct": 0.001692520692016465,
+    "macd_hist_pct": 0.0008447498225809508,
+    "eurusd_secondary_log_return": 0.0008240672566705397,
+    "eurusd_ratio_log_return": 0.002386008456060756,
+    "eurusd_rolling_correlation": 0.30237816337552387,
+    "usdjpy_secondary_log_return": 0.0011561279141127708,
+    "usdjpy_ratio_log_return": 0.0030075822065677663,
+    "usdjpy_rolling_correlation": 0.32103944736615797
+  }
+}

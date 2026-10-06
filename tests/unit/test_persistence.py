@@ -97,6 +97,72 @@ def test_load_rejects_mismatched_feature_columns(
         load_model(directory)
 
 
+def _fit_on(columns: list[str]):
+    rng = np.random.default_rng(1)
+    X = pd.DataFrame(rng.normal(size=(60, len(columns))), columns=columns)
+    y = pd.Series([-1] * 20 + [0] * 20 + [1] * 20, name="label")
+    scaler = fit_scaler(X)
+    model = LogisticRegressionModel(random_state=7)
+    model.fit(apply_scaler(scaler, X), y)
+    return model, scaler
+
+
+CROSS_ASSET_MODEL_COLUMNS = FEATURE_COLUMNS + [
+    "eurusd_secondary_log_return",
+    "eurusd_ratio_log_return",
+    "eurusd_rolling_correlation",
+]
+
+
+def test_load_accepts_cross_asset_columns_when_secondaries_recorded(tmp_path: Path) -> None:
+    model, scaler = _fit_on(CROSS_ASSET_MODEL_COLUMNS)
+    metadata = _build_metadata()
+    metadata.feature_columns = CROSS_ASSET_MODEL_COLUMNS
+    metadata.secondary_symbols = {"EURUSD": "EUR/USD"}
+    directory = tmp_path / "cross_asset_model"
+
+    save_model(directory, model, scaler, metadata)
+    _, _, loaded = load_model(directory)
+
+    assert loaded.feature_columns == CROSS_ASSET_MODEL_COLUMNS
+    assert loaded.secondary_symbols == {"EURUSD": "EUR/USD"}
+
+
+def test_load_rejects_cross_asset_columns_without_recorded_secondaries(tmp_path: Path) -> None:
+    model, scaler = _fit_on(CROSS_ASSET_MODEL_COLUMNS)
+    metadata = _build_metadata()
+    metadata.feature_columns = CROSS_ASSET_MODEL_COLUMNS
+    directory = tmp_path / "cross_asset_model"
+
+    save_model(directory, model, scaler, metadata)
+
+    with pytest.raises(ValueError):
+        load_model(directory)
+
+
+def test_load_rejects_duplicate_feature_columns(tmp_path: Path, fitted_model_and_scaler) -> None:
+    model, scaler, _ = fitted_model_and_scaler
+    metadata = _build_metadata()
+    metadata.feature_columns = FEATURE_COLUMNS + ["rsi"]
+    directory = tmp_path / "my_model"
+
+    save_model(directory, model, scaler, metadata)
+
+    with pytest.raises(ValueError):
+        load_model(directory)
+
+
+def test_metadata_without_secondary_fields_still_loads() -> None:
+    """metadata.json files written before secondary_symbols existed must stay readable."""
+    payload = _build_metadata().model_dump()
+    del payload["secondary_symbols"], payload["cross_asset_corr_window"]
+
+    loaded = ModelMetadata.model_validate(payload)
+
+    assert loaded.secondary_symbols == {}
+    assert loaded.cross_asset_corr_window == 20
+
+
 def test_metadata_round_trips_nested_evaluation_metrics(
     tmp_path: Path, fitted_model_and_scaler
 ) -> None:

@@ -14,6 +14,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# Column names build_cross_asset_features returns, in order.
+CROSS_ASSET_COLUMNS = ["secondary_log_return", "ratio_log_return", "rolling_correlation"]
+
 
 def align_secondary_close(
     primary_index: pd.DatetimeIndex,
@@ -124,3 +127,31 @@ def build_cross_asset_features(
         },
         index=primary_close.index,
     )
+
+def cross_asset_column_names(secondary_names: list[str]) -> list[str]:
+    """Prefixed column names for several secondaries, in the order produced below."""
+    return [f"{name.lower()}_{column}" for name in secondary_names for column in CROSS_ASSET_COLUMNS]
+
+
+def build_prefixed_cross_asset_features(
+    primary_close: pd.Series,
+    secondary_closes: dict[str, pd.Series],
+    corr_window: int = 20,
+) -> pd.DataFrame:
+    """Cross-asset features for several secondary instruments at once.
+
+    Runs build_cross_asset_features once per secondary and prefixes each
+    result's columns with the lower-cased name, e.g. {"EURUSD": close} gives
+    eurusd_secondary_log_return, eurusd_ratio_log_return,
+    eurusd_rolling_correlation. This is the single place that naming is
+    defined, so training scripts, the walk-forward sweep, and live inference
+    cannot drift apart.
+    """
+    if not secondary_closes:
+        raise ValueError("secondary_closes must contain at least one instrument")
+
+    frames = [
+        build_cross_asset_features(primary_close, close, corr_window=corr_window).add_prefix(f"{name.lower()}_")
+        for name, close in secondary_closes.items()
+    ]
+    return pd.concat(frames, axis=1)

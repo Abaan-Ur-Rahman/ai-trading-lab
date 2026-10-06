@@ -5,10 +5,12 @@ The scaler and metadata are stored as separate JSON files -- plain,
 diffable, human-readable, and not reliant on joblib's pickle-based format
 since they're just numbers and strings.
 
-On load, the persisted feature order is re-validated against the live
-FEATURE_COLUMNS in ml.dataset: a model trained on a different feature set
-(an older pipeline version, say) must fail loudly here rather than
-silently predicting on misaligned columns.
+On load, the persisted feature columns are re-validated against what the
+current pipeline can actually build: build_features' columns, plus prefixed
+cross-asset columns for each secondary instrument the metadata says the model
+was trained with. A model asking for a column the pipeline cannot produce (an
+older pipeline version, say) must fail loudly here rather than silently
+predicting on misaligned columns.
 """
 
 from __future__ import annotations
@@ -23,8 +25,9 @@ import pandas as pd
 import sklearn
 from pydantic import BaseModel, Field
 
+from features.cross_asset import cross_asset_column_names
+from features.feature_builder import BUILD_FEATURES_COLUMNS
 from features.scaling import FeatureScaler
-from ml.dataset import FEATURE_COLUMNS
 from ml.models.base import ModelWrapper
 
 _MODEL_FILENAME = "model.joblib"
@@ -63,6 +66,13 @@ class ModelMetadata(BaseModel):
     sklearn_version: str
 
     evaluation_metrics: dict = Field(default_factory=dict)
+
+    # Secondary instruments the model's cross-asset features need, as
+    # {name: provider symbol}, e.g. {"EURUSD": "EUR/USD"}. The name is the
+    # column prefix (lower-cased: eurusd_rolling_correlation). Empty for a
+    # single-symbol model, which keeps older metadata.json files loadable.
+    secondary_symbols: dict[str, str] = Field(default_factory=dict)
+    cross_asset_corr_window: int = 20
 
 
 def current_library_versions() -> dict[str, str]:
@@ -106,20 +116,24 @@ def load_model(directory: Path) -> tuple[ModelWrapper, FeatureScaler, ModelMetad
     """Load a model, its scaler, and its metadata from `directory`.
 
     Raises:
-        ValueError: If the persisted feature column order does not match
-            the current FEATURE_COLUMNS, since that means the model was
-            trained against a different (likely incompatible) feature
+        ValueError: If the persisted feature columns include anything the
+            current pipeline cannot build (given the secondary instruments
+            recorded in the metadata), or repeat a column, since that means
+            the model was trained against a different, incompatible feature
             pipeline and must not silently be used for predictions.
         FileNotFoundError: If `directory` is missing any of the three
             expected files.
     """
     metadata = ModelMetadata.model_validate_json((directory / _METADATA_FILENAME).read_text())
 
-    if metadata.feature_columns != FEATURE_COLUMNS:
+    buildable = set(BUILD_FEATURES_COLUMNS) | set(cross_asset_column_names(list(metadata.secondary_symbols)))
+    unknown = [column for column in metadata.feature_columns if column not in buildable]
+    if unknown or len(set(metadata.feature_columns)) != len(metadata.feature_columns):
         raise ValueError(
             f"Model was trained with feature columns {metadata.feature_columns}, "
-            f"but the current FEATURE_COLUMNS is {FEATURE_COLUMNS}. Refusing to "
-            "load a model whose features do not match the current pipeline.",
+            f"which the current pipeline cannot reproduce (unknown: {unknown}; "
+            f"secondary instruments recorded: {list(metadata.secondary_symbols)}). "
+            "Refusing to load a model whose features do not match the current pipeline.",
         )
 
     model = joblib.load(directory / _MODEL_FILENAME)

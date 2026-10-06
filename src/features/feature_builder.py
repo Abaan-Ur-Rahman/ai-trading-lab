@@ -7,6 +7,21 @@ import pandas as pd
 
 from features.technical_indicators import TechnicalIndicators
 
+# Every column build_features returns, in order. Persistence uses this to
+# check a saved model only asks for columns the current pipeline can build.
+BUILD_FEATURES_COLUMNS = [
+    "log_return",
+    "return_3",
+    "return_10",
+    "return_20",
+    "ema_gap_pct",
+    "rsi",
+    "atr_pct",
+    "macd_hist_pct",
+    "range_position",
+]
+
+
 def multi_period_log_return(close: pd.Series, periods: int) -> pd.Series:
     """Calculate the log return of close over a configurable number of periods.
 
