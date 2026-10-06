@@ -60,11 +60,14 @@ TIMEFRAME = "1h"
 RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
 
 # Secondary instrument for cross-asset features (features/cross_asset.py).
-# Silver was picked because it shares a provider and fetch/cache pattern
-# with XAU/USD already, and the gold-silver ratio is a well-known,
-# independent signal the single-symbol feature set cannot see at all.
-# Set to None to disable and fall back to the original single-symbol
-# feature sets untouched.
+# EUR/USD is a dollar-strength proxy: gold is priced in dollars, so broad
+# dollar moves are information the single-symbol feature set cannot see.
+# (Silver was the original plan; the candidate was named plus_xag then, and
+# models/ and experiments.jsonl entries from that time keep the old name.)
+# The validated configuration uses EUR/USD and USD/JPY together -- see
+# scripts/train_production_model.py. This script remains the original
+# model-selection experiment. Set to None to disable and fall back to the
+# original single-symbol feature sets untouched.
 SECONDARY_SYMBOL = "EUR/USD"
 SECONDARY_SYMBOL_FOR_FILENAMES = "EURUSD"
 SECONDARY_RAW_CSV_PATH = PROJECT_ROOT / "data" / "raw" / f"{SECONDARY_SYMBOL_FOR_FILENAMES}_{TIMEFRAME}.csv"
@@ -115,7 +118,7 @@ FEATURE_SET_PLUS_MOMENTUM_RANGE = "plus_momentum_range"
 MOMENTUM_COLUMNS = ["return_3", "return_10", "return_20"]
 RANGE_COLUMNS = ["range_position"]
 CROSS_ASSET_COLUMNS = ["secondary_log_return", "ratio_log_return", "rolling_correlation"]
-FEATURE_SET_PLUS_XAG = "plus_xag"
+FEATURE_SET_PLUS_EURUSD = "plus_eurusd"
 
 
 @dataclass
@@ -137,7 +140,7 @@ FEATURE_SETS: list[FeatureSet] = [
 # shows whether cross-asset information helps at all before assuming it
 # should be combined with momentum/range too.
 if SECONDARY_SYMBOL is not None:
-    FEATURE_SETS.append(FeatureSet(FEATURE_SET_PLUS_XAG, FEATURE_COLUMNS + CROSS_ASSET_COLUMNS))
+    FEATURE_SETS.append(FeatureSet(FEATURE_SET_PLUS_EURUSD, FEATURE_COLUMNS + CROSS_ASSET_COLUMNS))
 
 
 @dataclass
@@ -431,29 +434,29 @@ def main(provider=None) -> None:
     # would silently shrink the sample for base/plus_momentum/plus_range/
     # plus_momentum_range too, confounding their comparison with
     # something that has nothing to do with those feature sets.
-    xag_train = xag_val = xag_test = None
+    eurusd_train = eurusd_val = eurusd_test = None
     if SECONDARY_SYMBOL is not None:
         print(f"Building feature dataset with {SECONDARY_SYMBOL} cross-asset features...")
-        xag_dataset = build_feature_dataset(
+        eurusd_dataset = build_feature_dataset(
             raw_ohlcv, horizon=HORIZON, threshold=THRESHOLD,
             use_volatility_threshold=USE_VOLATILITY_THRESHOLD, volatility_multiplier=VOLATILITY_MULTIPLIER,
             secondary_dataframe=secondary_raw_ohlcv, cross_asset_corr_window=CROSS_ASSET_CORR_WINDOW,
         )
-        print(f"Feature dataset with {SECONDARY_SYMBOL}: {len(xag_dataset)} rows "
+        print(f"Feature dataset with {SECONDARY_SYMBOL}: {len(eurusd_dataset)} rows "
               f"(vs. {len(dataset)} without -- the difference is cross-asset warm-up/alignment).")
-        xag_train, xag_val, xag_test = chronological_split(
-            xag_dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT,
+        eurusd_train, eurusd_val, eurusd_test = chronological_split(
+            eurusd_dataset, horizon=HORIZON, train_pct=TRAIN_PCT, val_pct=VAL_PCT,
         )
 
     # Each feature set uses its own (train, val, test) -- the single-symbol
-    # sets use the shared split above; plus_xag uses its own, built from
+    # sets use the shared split above; plus_eurusd uses its own, built from
     # its own dataset. Looked up again after the winner is picked, so the
     # final test-set check and persistence use the matching partition.
     partitions_by_feature_set = {
         feature_set.name: (train, val, test) for feature_set in FEATURE_SETS
     }
-    if FEATURE_SET_PLUS_XAG in partitions_by_feature_set:
-        partitions_by_feature_set[FEATURE_SET_PLUS_XAG] = (xag_train, xag_val, xag_test)
+    if FEATURE_SET_PLUS_EURUSD in partitions_by_feature_set:
+        partitions_by_feature_set[FEATURE_SET_PLUS_EURUSD] = (eurusd_train, eurusd_val, eurusd_test)
 
     # --- Candidate comparison: up to 5 feature sets x 2 models =
     # up to 10 candidates. Hyperparameters are tuned strictly within each
@@ -498,8 +501,8 @@ def main(provider=None) -> None:
         print(winner.model.get_feature_importances())
 
     # Winner's own partitions -- identical to the shared (train, val, test)
-    # for every feature set except plus_xag, which gets its separately
-    # built (xag_train, xag_val, xag_test).
+    # for every feature set except plus_eurusd, which gets its separately
+    # built (eurusd_train, eurusd_val, eurusd_test).
     winner_train, winner_val, winner_test = partitions_by_feature_set[winner.feature_set_name]
 
     # --- Winner only: ONE final, one-time test-set check. No other

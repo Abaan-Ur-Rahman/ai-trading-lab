@@ -60,3 +60,5 @@ data/raw/*.csv
 # metadata.json and scaler.json stay tracked: small, human-readable, and
 # the actual reviewable record of what each persisted model is.
 models/*/model.joblib
+# Generated dashboard (rebuild with scripts/build_dashboard.py)
+reports/dashboard.html
