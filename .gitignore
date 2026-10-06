@@ -53,8 +53,9 @@ logs/
 # ==========================
 # Regenerable data & model artifacts
 # ==========================
-# Raw market data cache -- fetched via scripts/train_xauusd_model.py.
-data/raw/*.csv
+# data/raw/*.csv is deliberately NOT ignored: every recorded result splits
+# those exact bytes by position, and the production model can only be rebuilt
+# exactly from them (a re-fetch can return slightly different bars).
 
 # Trained model binaries -- regenerate via scripts/train_xauusd_model.py.
 # metadata.json and scaler.json stay tracked: small, human-readable, and

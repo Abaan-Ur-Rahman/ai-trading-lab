@@ -39,6 +39,7 @@ from forward_test import (
     RULES,
     RULES_REGISTERED_ON,
     THRESHOLD,
+    evaluate_rule,
     history,
     load_csv,
 )
@@ -125,13 +126,16 @@ def forward_section() -> dict | None:
         result = run_backtest(prices, signals, config)
         curves[RULE_LABELS[name]] = result.equity
         m = result.metrics
+        weekday = evaluate_rule(prices, signals, config)["weekday_only"]
         section["rules"].append({"name": RULE_LABELS[name], "return": m["total_return"], "sharpe": m["sharpe_ratio"],
-                                 "drawdown": m["max_drawdown"], "trades": m["n_trades"], "win_rate": m["win_rate"]})
+                                 "drawdown": m["max_drawdown"], "trades": m["n_trades"], "win_rate": m["win_rate"],
+                                 "weekday_return": weekday["total_return"] if weekday else None})
     benchmark = buy_and_hold(prices, done.index.min())
     curves["Buy & hold gold"] = benchmark.equity
     bm = benchmark.metrics
     section["rules"].append({"name": "Buy & hold gold", "return": bm["total_return"], "sharpe": bm["sharpe_ratio"],
-                             "drawdown": bm["max_drawdown"], "trades": None, "win_rate": None})
+                             "drawdown": bm["max_drawdown"], "trades": None, "win_rate": None,
+                             "weekday_return": None})
     frame = pd.DataFrame(curves).ffill()
     section["curves"] = {
         "labels": [f"{t:%Y-%m-%d %H:%M}" for t in frame.index],
@@ -222,15 +226,17 @@ def build() -> str:
             rows = "".join(
                 f"<tr><th scope='row'>{html.escape(r['name'])}</th><td>{pct(r['return'])}</td><td>{r['sharpe']:+.2f}</td>"
                 f"<td>{pct(r['drawdown'], sign=False)}</td><td>{'–' if r['trades'] is None else r['trades']}</td>"
-                f"<td>{'–' if r['win_rate'] is None else pct(r['win_rate'], sign=False)}</td></tr>"
+                f"<td>{'–' if r['win_rate'] is None else pct(r['win_rate'], sign=False)}</td>"
+                f"<td>{pct(r['weekday_return'])}</td></tr>"
                 for r in forward["rules"])
             table = (f"<div class='table-wrap'><table><thead><tr><th>Rule</th><th>Return</th><th>Sharpe</th><th>Max drawdown</th><th>Trades</th>"
-                     f"<th>Win rate</th></tr></thead><tbody>{rows}</tbody></table></div>")
+                     f"<th>Win rate</th><th>Weekday-only return</th></tr></thead><tbody>{rows}</tbody></table></div>")
             chart = '<div class="chart"><canvas id="forwardChart" aria-label="Forward rule equity curves"></canvas></div>'
         forward_html = f"""
         <p class="caption">Production model's predictions on bars after {forward['first_bar']} UTC (latest
         {forward['last_bar']}). Rules registered {forward['registered_on']}; a rule passes only if, after
-        {forward['needed']:,} bars, both its return after costs and its Sharpe are positive.</p>
+        {forward['needed']:,} bars, its return after costs and its Sharpe are positive on all bars and on weekday-only trades
+        (weekend quotes can't be traded).</p>
         {early}{chart}{table}"""
 
     generated = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")

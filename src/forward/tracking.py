@@ -11,6 +11,10 @@ it honest:
   later fetch, so nothing evaluated earlier can silently change.
 - A bar is only predicted once every secondary instrument also has data up to
   that bar, matching how the training data was built.
+- Twelve Data serves 1h quotes 24/7, weekends included (gold since April 2025,
+  EUR/USD and USD/JPY since January 2026), but nobody can trade gold or these
+  pairs at weekend prices. weekday_tradeable_signals keeps only signals whose
+  entry and exit would both happen Monday-Friday (UTC).
 """
 
 from __future__ import annotations
@@ -80,3 +84,31 @@ def predicted_class(probabilities: pd.DataFrame) -> pd.Series:
     """Most likely class (-1/0/1) per row of SELL/HOLD/BUY probabilities."""
     names = probabilities[CLASS_NAMES].astype(float).idxmax(axis=1)
     return names.map({"SELL": -1, "HOLD": 0, "BUY": 1})
+
+
+def weekday_tradeable_signals(
+    signals: pd.DataFrame,
+    price_index: pd.DatetimeIndex,
+    holding_bars: int,
+) -> pd.DataFrame:
+    """Signals whose signal bar, entry bar and exit bar all fall Monday-Friday (UTC).
+
+    Matches backtest.engine's execution: entry at the open of the bar after the
+    signal, exit at the open of the bar `holding_bars` after entry. A signal
+    whose entry or exit would fall past the end of `price_index` is dropped,
+    since no trade could be completed from it anyway.
+    """
+    positions = price_index.get_indexer(signals.index)
+    if (positions < 0).any():
+        raise ValueError("every signal timestamp must be a bar in price_index")
+    entry, exit_ = positions + 1, positions + 1 + holding_bars
+    in_range = exit_ < len(price_index)
+    weekday = price_index.dayofweek < 5
+
+    def on_weekday(idx):
+        out = in_range.copy()
+        out[in_range] = weekday[idx[in_range]]
+        return out
+
+    keep = weekday[positions] & on_weekday(entry) & on_weekday(exit_)
+    return signals.loc[keep]

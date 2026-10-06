@@ -90,3 +90,30 @@ def test_predicted_class_takes_most_likely() -> None:
 
     assert predicted_class(proba).tolist() == [-1, 0, 1]
     assert np.issubdtype(predicted_class(proba).dtype, np.integer)
+
+
+def test_weekday_tradeable_signals_drops_trades_touching_weekends() -> None:
+    from forward.tracking import weekday_tradeable_signals
+
+    # Fri 2026-10-02 20:00 .. Mon 2026-10-05 03:00, hourly, 24/7 like Twelve Data.
+    index = pd.date_range("2026-10-02 20:00", "2026-10-05 03:00", freq="h", tz="UTC")
+    signals = pd.DataFrame({"SELL": 0.1, "HOLD": 0.2, "BUY": 0.7}, index=index[[0, 1, 2, 30, 52]])
+
+    kept = weekday_tradeable_signals(signals, index, holding_bars=2)
+
+    # Fri 20:00 -> entry 21:00, exit 23:00: all Friday, kept.
+    # Fri 21:00 -> exit Sat 00:00: dropped. Fri 22:00 -> entry 23:00, exit Sat 01:00: dropped.
+    # Sun 02:00: dropped. Mon 00:00 -> entry 01:00, exit 03:00: all Monday, kept.
+    assert index[52].day_name() == "Monday"
+    assert list(kept.index) == [index[0], index[52]]
+
+
+def test_weekday_tradeable_signals_drops_trades_past_the_data() -> None:
+    from forward.tracking import weekday_tradeable_signals
+
+    index = pd.date_range("2026-10-05 00:00", periods=5, freq="h", tz="UTC")  # Monday
+    signals = pd.DataFrame({"SELL": 0.1, "HOLD": 0.2, "BUY": 0.7}, index=index[[0, 3]])
+
+    kept = weekday_tradeable_signals(signals, index, holding_bars=2)
+
+    assert list(kept.index) == [index[0]]  # index[3] would exit at position 6, beyond the data

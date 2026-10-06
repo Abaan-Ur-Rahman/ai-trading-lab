@@ -32,6 +32,17 @@ Verdict rule: a candidate earns further work only once at least
 MIN_BARS_FOR_VERDICT forward bars have outcomes, and only if its total return
 after costs AND its Sharpe ratio are both positive. Four candidates are being
 compared, so one of them clearing the bar by a small margin may be luck.
+
+AMENDMENT (2026-10-06, the day the rules were registered, with 104 forward bars
+logged and before any verdict-relevant amount of data): Twelve Data serves 1h
+quotes 24/7, weekends included, and nobody can trade gold or these currency
+pairs at weekend prices. In the backtest, weekend-touching trades were roughly
+break-even while weekday trades lost more, so weekend quotes can flatter a
+result. A rule therefore now ALSO has to pass the same test using only trades
+whose signal, entry and exit bars are all Monday-Friday UTC
+(forward.tracking.weekday_tradeable_signals). This only makes the verdict
+stricter, never looser. Because bars arrive 24/7, 1,000 bars take about six
+weeks (around mid-November 2026), not two months.
 """
 
 from __future__ import annotations
@@ -52,7 +63,14 @@ from sklearn.metrics import f1_score
 
 from backtest.engine import BacktestConfig, buy_and_hold, run_backtest
 from data.dataframe import candles_to_dataframe
-from forward.tracking import append_bars, attach_outcomes, bars_ready_to_predict, complete_new_bars, predicted_class
+from forward.tracking import (
+    append_bars,
+    attach_outcomes,
+    bars_ready_to_predict,
+    complete_new_bars,
+    predicted_class,
+    weekday_tradeable_signals,
+)
 from ml.dataset import CLASS_NAMES
 from ml.inference import predict_from_ohlcv
 from ml.persistence import load_model
@@ -66,7 +84,7 @@ PREDICTIONS_PATH = REPORT_DIR / "predictions.csv"
 TIMEFRAME = "1h"
 MAX_FETCH = 5000  # Twelve Data's per-request maximum
 SECONDS_BETWEEN_REQUESTS = 8  # stays under the free plan's 8 requests/minute
-MIN_BARS_FOR_VERDICT = 1000  # roughly 2 months of 1h gold bars
+MIN_BARS_FOR_VERDICT = 1000  # about 6 weeks: Twelve Data serves 1h bars 24/7
 HORIZON = 5
 THRESHOLD = 0.005
 
@@ -148,14 +166,25 @@ def update(provider=None) -> None:
         primary.index, {name: frame.index.max() for name, frame in secondaries.items()}, logged, start_after,
     )
 
-    rows = []
+    rows, skipped = [], []
     for bar in to_predict:
-        proba = predict_from_ohlcv(
-            primary.loc[:bar], model, scaler,
-            feature_columns=metadata.feature_columns,
-            secondary_ohlcv={name: frame.loc[:bar] for name, frame in secondaries.items()},
-            cross_asset_corr_window=metadata.cross_asset_corr_window,
-        )
+        # One bar whose inputs can't be used (e.g. a currency feed with a gap of
+        # more than 24h, which predict_from_ohlcv refuses) must not stop every
+        # other bar from being logged, today and on every later run. It is
+        # skipped, reported here, and retried on the next run; since stored
+        # history never changes, a bar that can't be predicted stays unlogged,
+        # exactly as a live trader would have had no valid signal for it.
+        try:
+            proba = predict_from_ohlcv(
+                primary.loc[:bar], model, scaler,
+                feature_columns=metadata.feature_columns,
+                secondary_ohlcv={name: frame.loc[:bar] for name, frame in secondaries.items()},
+                cross_asset_corr_window=metadata.cross_asset_corr_window,
+            )
+        except ValueError as exc:
+            skipped.append(bar)
+            print(f"  WARNING: skipped {bar:%Y-%m-%d %H:%M}: {exc}")
+            continue
         rows.append({"timestamp": bar, **proba.to_dict(), "close": primary.loc[bar, "close"],
                      "model": MODEL_DIRECTORY.name, "logged_at": now.isoformat()})
 
@@ -167,8 +196,20 @@ def update(provider=None) -> None:
               + ", ".join(f"{c} {latest[c]:.3f}" for c in CLASS_NAMES))
     else:
         print("No new bars to predict yet.")
+    if skipped:
+        print(f"WARNING: {len(skipped)} bar(s) could not be predicted (see above); they will be retried next run.")
     total = 0 if log is None else len(log)
     print(f"Prediction log: {total + len(rows)} bar(s) since {start_after:%Y-%m-%d %H:%M}.")
+
+
+def evaluate_rule(prices: pd.DataFrame, signals: pd.DataFrame, config: BacktestConfig) -> dict:
+    """Backtest one rule on all forward bars and on weekday-only trades, plus its verdict inputs."""
+    all_bars = run_backtest(prices, signals, config).metrics
+    weekday_signals = weekday_tradeable_signals(signals, prices.index, config.holding_bars)
+    weekday = run_backtest(prices, weekday_signals, config).metrics if not weekday_signals.empty else None
+    passes_all = all_bars["total_return"] > 0 and all_bars["sharpe_ratio"] > 0
+    passes_weekday = weekday is not None and weekday["total_return"] > 0 and weekday["sharpe_ratio"] > 0
+    return {"all_bars": all_bars, "weekday_only": weekday, "passes": passes_all and passes_weekday}
 
 
 def report() -> None:
@@ -198,18 +239,20 @@ def report() -> None:
     verdict_ready = len(done) >= MIN_BARS_FOR_VERDICT
 
     print(f"\nPre-registered rules (registered {RULES_REGISTERED_ON}), backtested on forward bars:")
-    print(f"{'rule':<16}{'return':>9}{'sharpe':>8}{'max DD':>8}{'trades':>8}{'win rate':>10}  verdict")
+    print(f"{'rule':<16}{'return':>9}{'sharpe':>8}{'max DD':>8}{'trades':>8}{'win rate':>10}"
+          f"{'weekday ret':>13}{'wkday shrp':>11}  verdict")
     summary = {}
     for name, config in RULES.items():
-        result = run_backtest(prices, signals, config)
-        m = result.metrics
-        passes = m["total_return"] > 0 and m["sharpe_ratio"] > 0
-        verdict = ("PASSES" if passes else "fails") if verdict_ready else "too early"
+        evaluation = evaluate_rule(prices, signals, config)
+        m, w = evaluation["all_bars"], evaluation["weekday_only"]
+        verdict = ("PASSES" if evaluation["passes"] else "fails") if verdict_ready else "too early"
+        weekday_cells = f"{w['total_return']:>+13.1%}{w['sharpe_ratio']:>+11.2f}" if w else f"{'no trades':>13}{'':>11}"
         print(f"{name:<16}{m['total_return']:>+9.1%}{m['sharpe_ratio']:>+8.2f}{m['max_drawdown']:>8.1%}"
-              f"{m['n_trades']:>8}{m['win_rate']:>10.1%}  {verdict}")
-        summary[name] = {"rules": asdict(config), "metrics": m, "verdict": verdict}
+              f"{m['n_trades']:>8}{m['win_rate']:>10.1%}{weekday_cells}  {verdict}")
+        summary[name] = {"rules": asdict(config), "metrics": m, "weekday_only_metrics": w, "verdict": verdict}
     bm = benchmark.metrics
     print(f"{'buy_and_hold':<16}{bm['total_return']:>+9.1%}{bm['sharpe_ratio']:>+8.2f}{bm['max_drawdown']:>8.1%}")
+    print("A rule passes only if return and Sharpe are positive on all bars AND on weekday-only trades.")
     if not verdict_ready:
         print(f"\nToo early to judge: wait for {MIN_BARS_FOR_VERDICT} bars with outcomes. "
               "Early numbers swing a lot; don't act on them.")
